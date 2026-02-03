@@ -9,13 +9,23 @@ import os
 from eth_account import Account
 from web3 import Web3
 
-# Base Mainnet
-BASE_CHAIN_ID = 8453
-BASE_RPC = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
+# Network configuration - set USE_TESTNET=true for Base Sepolia
+USE_TESTNET = os.getenv("USE_TESTNET", "false").lower() == "true"
 
-# ERC-8004 Contract Addresses on Base Mainnet
-IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
-REPUTATION_REGISTRY = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
+if USE_TESTNET:
+    # Base Sepolia (Testnet)
+    BASE_CHAIN_ID = 84532
+    BASE_RPC = os.getenv("BASE_RPC_URL", "https://sepolia.base.org")
+    IDENTITY_REGISTRY = "0x8004A818BFB912233c491871b3d84c89A494BD9e"
+    REPUTATION_REGISTRY = "0x8004B663056A597Dffe9eCcC1965A193B7388713"
+    print("🧪 ERC-8004: Using Base Sepolia TESTNET")
+else:
+    # Base Mainnet
+    BASE_CHAIN_ID = 8453
+    BASE_RPC = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
+    IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+    REPUTATION_REGISTRY = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
+    print("🔴 ERC-8004: Using Base MAINNET")
 
 # MoltMart operator wallet (same as facilitator - receives fees, mints identities)
 OPERATOR_PRIVATE_KEY = os.getenv("FACILITATOR_PRIVATE_KEY", "")

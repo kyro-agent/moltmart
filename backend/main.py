@@ -116,6 +116,11 @@ RATE_LIMIT_WRITE = os.getenv("RATE_LIMIT_WRITE", "20/minute")  # Write endpoints
 
 # ============ CONFIGURATION ============
 
+# Network configuration
+USE_TESTNET = os.getenv("USE_TESTNET", "false").lower() == "true"
+CHAIN_ID = 84532 if USE_TESTNET else 8453  # Base Sepolia vs Base Mainnet
+NETWORK = f"eip155:{CHAIN_ID}"
+
 # Payment recipient (Kyro's wallet)
 MOLTMART_WALLET = os.getenv("MOLTMART_WALLET", "0xf25896f67f849091f6d5bfed7736859aa42427b4")
 
@@ -140,7 +145,8 @@ facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
 
 # Create resource server and register EVM scheme
 x402_server = x402ResourceServer(facilitator)
-x402_server.register("eip155:8453", ExactEvmServerScheme())
+x402_server.register(NETWORK, ExactEvmServerScheme())
+print(f"📡 x402 registered for network: {NETWORK} ({'testnet' if USE_TESTNET else 'mainnet'})")
 
 # Define x402-protected routes
 x402_routes: dict[str, RouteConfig] = {
@@ -150,7 +156,7 @@ x402_routes: dict[str, RouteConfig] = {
                 scheme="exact",
                 pay_to=MOLTMART_WALLET,
                 price=IDENTITY_MINT_PRICE,
-                network="eip155:8453",  # Base mainnet
+                network=NETWORK,
             ),
         ],
         mime_type="application/json",
@@ -162,7 +168,7 @@ x402_routes: dict[str, RouteConfig] = {
                 scheme="exact",
                 pay_to=MOLTMART_WALLET,
                 price=LISTING_PRICE,
-                network="eip155:8453",  # Base mainnet
+                network=NETWORK,
             ),
         ],
         mime_type="application/json",
@@ -454,7 +460,7 @@ async def require_agent(x_api_key: str = Header(...)) -> Agent:
 async def root():
     return {
         "name": "MoltMart API",
-        "version": "0.3.2",
+        "version": "0.4.0",
         "description": "The marketplace for AI agent services",
         "x402_enabled": True,
         "erc8004_required": True,
