@@ -27,7 +27,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 # ERC-8004 integration
-from erc8004 import get_8004_credentials_simple
+from erc8004 import get_8004_credentials_simple, register_agent as mint_8004_identity, get_agent_registry_uri, check_connection as check_8004_connection
 
 # Database
 from database import (
@@ -412,17 +412,34 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    # Check ERC-8004 connection
+    erc8004_status = check_8004_connection()
+    
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "erc8004": {
+            "connected": erc8004_status.get("connected", False),
+            "chain": "Base Mainnet (8453)",
+            "identity_registry": erc8004_status.get("identity_registry"),
+            "reputation_registry": erc8004_status.get("reputation_registry"),
+            "operator_funded": erc8004_status.get("operator_balance_eth", 0) > 0 if erc8004_status.get("operator_balance_eth") else False,
+        }
+    }
 
 
 # ============ AGENT REGISTRATION (x402 PROTECTED) ============
 
 @app.post("/agents/register", response_model=Agent)
-async def register_agent(agent_data: AgentRegister):
+async def register_agent(agent_data: AgentRegister, request: Request):
     """
-    Register a new agent and get an API key.
+    Register a new agent, mint ERC-8004 identity, and get an API key.
     
     💰 Requires x402 payment: $0.05 USDC on Base
+    
+    This will:
+    1. Mint an ERC-8004 identity NFT on Base (if you don't have one)
+    2. Give you an API key to list services and buy from others
     
     Returns your API key - save it! You'll need it to list services.
     """
@@ -438,20 +455,47 @@ async def register_agent(agent_data: AgentRegister):
     agent_id = str(uuid.uuid4())
     api_key = f"mm_{secrets.token_urlsafe(32)}"
     
-    # Check for ERC-8004 credentials on Ethereum mainnet
+    # Check for EXISTING ERC-8004 credentials on Base
     has_8004 = False
     agent_8004_id = None
     agent_8004_registry = None
     scan_url = None
+    mint_tx_hash = None
+    
     try:
         creds = await get_8004_credentials_simple(agent_data.wallet_address)
-        if creds:
-            has_8004 = creds.get("has_8004", False)
+        if creds and creds.get("has_8004"):
+            # Already has ERC-8004 identity - use it
+            has_8004 = True
             agent_8004_id = creds.get("agent_id")
             agent_8004_registry = creds.get("agent_registry")
             scan_url = creds.get("8004scan_url")
+            print(f"Agent {agent_data.name} already has ERC-8004 identity: {agent_8004_id}")
+        else:
+            # No existing identity - mint a new one!
+            print(f"Minting ERC-8004 identity for {agent_data.name}...")
+            
+            # Build the agent URI (points to their profile on MoltMart)
+            base_url = str(request.base_url).rstrip('/')
+            agent_uri = f"{base_url}/agents/{agent_id}/profile.json"
+            
+            # Mint the identity
+            mint_result = mint_8004_identity(agent_uri)
+            
+            if mint_result.get("success"):
+                has_8004 = True
+                agent_8004_id = mint_result.get("agent_id")
+                agent_8004_registry = get_agent_registry_uri(agent_8004_id) if agent_8004_id else None
+                mint_tx_hash = mint_result.get("tx_hash")
+                scan_url = f"https://basescan.org/tx/{mint_tx_hash}" if mint_tx_hash else None
+                print(f"✅ Minted ERC-8004 identity #{agent_8004_id} for {agent_data.name} (tx: {mint_tx_hash})")
+            else:
+                # Minting failed - continue without 8004 (don't block registration)
+                print(f"⚠️ ERC-8004 minting failed for {agent_data.name}: {mint_result.get('error')}")
+                
     except Exception as e:
-        print(f"Warning: Could not fetch ERC-8004 credentials: {e}")
+        print(f"Warning: ERC-8004 error for {agent_data.name}: {e}")
+        # Don't block registration if 8004 fails
     
     # Create database agent
     db_agent = AgentDB(
@@ -481,6 +525,58 @@ async def register_agent(agent_data: AgentRegister):
 async def get_my_agent(agent: Agent = Depends(require_agent)):
     """Get your agent profile"""
     return agent
+
+
+@app.get("/agents/{agent_id}/profile.json")
+async def get_agent_profile_json(agent_id: str, request: Request):
+    """
+    Get agent's ERC-8004 metadata (tokenURI endpoint).
+    
+    This is the JSON that the ERC-8004 NFT points to.
+    Public endpoint - anyone can view.
+    
+    Returns agent registration file per ERC-8004 spec.
+    """
+    # Query database for agent by ID
+    from database import get_agent_by_id
+    db_agent = await get_agent_by_id(agent_id)
+    
+    if not db_agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Build ERC-8004 registration file
+    base_url = str(request.base_url).rstrip('/')
+    
+    profile = {
+        "type": "erc8004-agent-registration-v1",
+        "name": db_agent.name,
+        "description": db_agent.description or f"AI agent on MoltMart",
+        "image": f"https://moltmart.app/api/avatar/{agent_id}",  # Placeholder
+        "services": [
+            {
+                "type": "moltmart-marketplace",
+                "name": "MoltMart",
+                "endpoint": f"{base_url}",
+                "description": "Buy and sell AI agent services"
+            }
+        ],
+        "registrations": [
+            {
+                "agentRegistry": db_agent.agent_8004_registry,
+                "agentId": db_agent.agent_8004_id
+            }
+        ] if db_agent.agent_8004_id else [],
+        "supportedTrust": ["reputation"],
+        "external_links": {}
+    }
+    
+    # Add social links if available
+    if db_agent.moltx_handle:
+        profile["external_links"]["moltx"] = f"https://moltx.io/{db_agent.moltx_handle}"
+    if db_agent.github_handle:
+        profile["external_links"]["github"] = f"https://github.com/{db_agent.github_handle}"
+    
+    return JSONResponse(content=profile, media_type="application/json")
 
 
 @app.get("/agents/8004/{wallet_address}")

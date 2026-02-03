@@ -124,6 +124,15 @@ async def get_agent_by_wallet(wallet: str) -> Optional[AgentDB]:
         return result.scalar_one_or_none()
 
 
+async def get_agent_by_id(agent_id: str) -> Optional[AgentDB]:
+    """Get agent by ID"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentDB).where(AgentDB.id == agent_id)
+        )
+        return result.scalar_one_or_none()
+
+
 async def create_agent(agent: AgentDB) -> AgentDB:
     """Create new agent"""
     async with async_session() as session:
