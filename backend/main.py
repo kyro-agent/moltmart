@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import httpx
 import json
+import base64
 
 # Rate limiting
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -763,13 +764,15 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
     Call a service through MoltMart's proxy.
     
     🔐 Requires authentication (X-API-Key header)
-    💰 Payment: Direct transfer to seller's wallet via Bankr
+    💰 Requires x402 payment to seller's wallet
     
     Flow:
-    1. Buyer calls this endpoint with request body
-    2. MoltMart forwards to seller's endpoint with HMAC signature
-    3. Seller verifies signature, processes request
-    4. Response returned to buyer
+    1. Buyer calls this endpoint
+    2. If no payment: returns 402 with payment instructions (payTo = seller wallet)
+    3. Buyer signs x402 payment and retries with X-Payment header
+    4. MoltMart verifies payment via facilitator
+    5. MoltMart forwards to seller's endpoint with HMAC signature
+    6. Response returned to buyer
     
     Headers sent to seller:
     - X-MoltMart-Token: Secret token for basic auth
@@ -790,6 +793,140 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
             status_code=400, 
             detail="This service does not have a callable endpoint"
         )
+    
+    # ============ x402 PAYMENT VERIFICATION ============
+    
+    # Build payment requirements - payment goes DIRECT to seller
+    payment_config = PaymentOption(
+        scheme="exact",
+        pay_to=service.provider_wallet,  # Direct to seller!
+        price=f"${service.price_usdc}",
+        network="eip155:8453",  # Base mainnet
+    )
+    
+    # Get the full URL for the resource
+    resource_url = str(request.url)
+    
+    # Check for X-Payment header
+    payment_header = request.headers.get("X-Payment")
+    
+    if not payment_header:
+        # No payment - return 402 with requirements
+        # Build the 402 response manually
+        return JSONResponse(
+            status_code=402,
+            content={
+                "error": "Payment Required",
+                "x402Version": 1,
+                "accepts": [
+                    {
+                        "scheme": "exact",
+                        "network": "eip155:8453",
+                        "maxAmountRequired": str(int(service.price_usdc * 1_000_000)),  # USDC has 6 decimals
+                        "resource": resource_url,
+                        "description": f"Payment for service: {service.name}",
+                        "mimeType": "application/json",
+                        "payTo": service.provider_wallet,
+                        "maxTimeoutSeconds": 300,
+                        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",  # USDC on Base
+                        "extra": {
+                            "name": "USD Coin",
+                            "decimals": 6,
+                        },
+                    }
+                ],
+            },
+            headers={
+                "X-Payment-Required": "true",
+            }
+        )
+    
+    # Payment header exists - verify it via facilitator
+    try:
+        # Decode the payment payload from base64
+        payment_payload_json = base64.b64decode(payment_header).decode('utf-8')
+        payment_payload = json.loads(payment_payload_json)
+        
+        # Build requirements for verification
+        payment_requirements = {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "maxAmountRequired": str(int(service.price_usdc * 1_000_000)),
+            "resource": resource_url,
+            "payTo": service.provider_wallet,
+            "maxTimeoutSeconds": 300,
+            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        }
+        
+        # Verify and settle via facilitator
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Step 1: Verify payment
+            verify_response = await client.post(
+                f"{FACILITATOR_URL}/verify",
+                json={
+                    "paymentPayload": payment_payload,
+                    "paymentRequirements": payment_requirements,
+                },
+            )
+            
+            if verify_response.status_code != 200:
+                return JSONResponse(
+                    status_code=402,
+                    content={
+                        "error": "Payment verification failed",
+                        "detail": verify_response.text,
+                    }
+                )
+            
+            verify_result = verify_response.json()
+            if not verify_result.get("isValid", False):
+                return JSONResponse(
+                    status_code=402,
+                    content={
+                        "error": "Payment invalid",
+                        "reason": verify_result.get("invalidReason", "Unknown"),
+                    }
+                )
+            
+            # Step 2: Settle payment (submit to blockchain)
+            settle_response = await client.post(
+                f"{FACILITATOR_URL}/settle",
+                json={
+                    "paymentPayload": payment_payload,
+                    "paymentRequirements": payment_requirements,
+                },
+            )
+            
+            if settle_response.status_code == 200:
+                settle_result = settle_response.json()
+                if not settle_result.get("success"):
+                    return JSONResponse(
+                        status_code=402,
+                        content={
+                            "error": "Payment settlement failed",
+                            "reason": settle_result.get("errorReason", "Unknown"),
+                        }
+                    )
+                # Payment settled on-chain! Continue with request
+            else:
+                return JSONResponse(
+                    status_code=402,
+                    content={
+                        "error": "Payment settlement error",
+                        "detail": settle_response.text,
+                    }
+                )
+                
+    except Exception as e:
+        return JSONResponse(
+            status_code=402,
+            content={
+                "error": "Payment processing error",
+                "detail": str(e),
+            }
+        )
+    
+    # ============ PAYMENT VERIFIED - PROCEED WITH REQUEST ============
     
     # Get request body
     try:
