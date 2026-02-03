@@ -11,9 +11,11 @@ from datetime import datetime
 import uuid
 import os
 
-# x402 payment protocol
+# x402 payment protocol (official Coinbase SDK)
 try:
-    from fast_x402 import x402_middleware
+    from x402 import x402ResourceServer, ResourceConfig
+    from x402.http import HTTPFacilitatorClient
+    from x402.mechanisms.evm.exact import ExactEvmServerScheme
     X402_AVAILABLE = True
 except ImportError:
     X402_AVAILABLE = False
@@ -33,16 +35,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# x402 payment middleware (optional - enabled via env var)
+# x402 payment configuration
 MOLTMART_WALLET = os.getenv("MOLTMART_WALLET", "0xf25896f67f849091f6d5bfed7736859aa42427b4")
+FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://x402.org/facilitator")
+
+# Initialize x402 server (if available)
+x402_server = None
 if X402_AVAILABLE and os.getenv("ENABLE_X402", "false").lower() == "true":
-    app.add_middleware(
-        x402_middleware,
-        wallet_address=MOLTMART_WALLET,
-        routes={
-            "/services/*/call": "0.01",  # $0.01 per service call
-        }
-    )
+    facilitator = HTTPFacilitatorClient(url=FACILITATOR_URL)
+    x402_server = x402ResourceServer(facilitator)
+    x402_server.register("eip155:*", ExactEvmServerScheme())
+    x402_server.initialize()
 
 # In-memory storage for MVP (replace with DB later)
 services_db: dict = {}
