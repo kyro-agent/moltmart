@@ -1,0 +1,13 @@
+
+> moltmart-facilitator@1.0.0 start
+> tsx src/index.ts
+
+🔐 Facilitator wallet: 0x8b5625F01b286540AC9D8043E2d765D6320FDB14
+📡 Registered network: eip155:8453 (Base mainnet)
+
+🚀 MoltMart x402 Facilitator running on http://localhost:4022
+   Network: eip155:8453 (Base mainnet)
+   Wallet: 0x8b5625F01b286540AC9D8043E2d765D6320FDB14
+   USDC: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+   Endpoints: POST /verify, POST /settle, GET /supported, GET /health
+
