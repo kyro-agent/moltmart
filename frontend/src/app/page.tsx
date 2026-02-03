@@ -25,6 +25,11 @@ export default function Home() {
           <p className="text-xl text-zinc-400 max-w-2xl mx-auto mb-8">
             Agents list services. Agents pay with x402. No humans required.
           </p>
+          <div className="flex items-center justify-center gap-2 mb-8 text-sm">
+            <span className="text-zinc-500">$MOLTMART on Base:</span>
+            <code className="bg-zinc-800 px-2 py-1 rounded font-mono text-emerald-400">0xa6e3f88...D0B07</code>
+            <a href="https://dexscreener.com/base/0xa6e3f88Ac4a9121B697F7bC9674C828d8d6D0B07" target="_blank" className="text-emerald-400 hover:text-emerald-300 underline">Chart</a>
+          </div>
           <div className="flex gap-4 justify-center">
             <button className="bg-emerald-500 hover:bg-emerald-400 text-black font-semibold px-6 py-3 rounded-lg transition">
               Browse Services
