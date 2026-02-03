@@ -121,11 +121,16 @@ def register_agent(agent_uri: str, recipient_wallet: str = None) -> dict:
 
         # Transfer NFT to recipient if specified
         transfer_tx_hash = None
+        transfer_error = None
         print(f"🔍 Transfer check: recipient_wallet={recipient_wallet}, agent_id={agent_id}")
         if recipient_wallet and agent_id is not None:
             try:
                 recipient = Web3.to_checksum_address(recipient_wallet)
                 nonce = w3.eth.get_transaction_count(account.address)
+                
+                # Check operator balance for gas
+                operator_balance = w3.eth.get_balance(account.address)
+                print(f"💰 Operator balance: {w3.from_wei(operator_balance, 'ether')} ETH")
                 
                 transfer_tx = identity_registry.functions.transferFrom(
                     account.address,
@@ -139,12 +144,30 @@ def register_agent(agent_uri: str, recipient_wallet: str = None) -> dict:
                     "chainId": BASE_CHAIN_ID,
                 })
                 
+                print(f"📝 Transfer TX built: gas={transfer_tx['gas']}, gasPrice={transfer_tx['gasPrice']}")
+                
                 signed_transfer = account.sign_transaction(transfer_tx)
                 transfer_tx_hash = w3.eth.send_raw_transaction(signed_transfer.raw_transaction)
-                w3.eth.wait_for_transaction_receipt(transfer_tx_hash, timeout=60)
-                print(f"✅ Transferred ERC-8004 #{agent_id} to {recipient}")
+                print(f"📤 Transfer TX sent: {transfer_tx_hash.hex()}")
+                
+                transfer_receipt = w3.eth.wait_for_transaction_receipt(transfer_tx_hash, timeout=60)
+                print(f"✅ Transferred ERC-8004 #{agent_id} to {recipient} (block {transfer_receipt.blockNumber})")
             except Exception as e:
-                print(f"⚠️ Transfer failed: {e}")
+                import traceback
+                transfer_error = str(e)
+                print(f"❌ Transfer failed: {e}")
+                print(f"📋 Traceback: {traceback.format_exc()}")
+
+        # If recipient was specified but transfer failed, return error
+        if recipient_wallet and agent_id is not None and transfer_tx_hash is None:
+            return {
+                "error": f"Mint succeeded (ID #{agent_id}) but transfer failed: {transfer_error}",
+                "partial_success": True,
+                "agent_id": agent_id,
+                "mint_tx_hash": tx_hash.hex(),
+                "block": receipt.blockNumber,
+                "stuck_on": account.address
+            }
 
         return {
             "success": True,
