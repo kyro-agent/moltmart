@@ -40,6 +40,7 @@ from database import (
     count_agents,
     create_agent,
     create_service,
+    delete_agent_by_wallet,
     get_agent_by_api_key,
     get_agent_by_wallet,
     get_all_services,
@@ -1171,6 +1172,25 @@ async def get_my_transactions(agent: Agent = Depends(require_agent), limit: int 
         "transactions": my_txs[-limit:],
         "total": len(my_txs),
     }
+
+
+# ============ ADMIN ENDPOINTS ============
+
+
+@app.delete("/admin/agents/{wallet}")
+async def admin_delete_agent(wallet: str, x_admin_key: str = Header(None)):
+    """
+    Delete an agent registration (admin only).
+    Used for testing - allows re-registration of same wallet.
+    """
+    admin_key = os.getenv("ADMIN_KEY", "test-admin-key")
+    if x_admin_key != admin_key:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    deleted = await delete_agent_by_wallet(wallet)
+    if deleted:
+        return {"status": "deleted", "wallet": wallet}
+    raise HTTPException(status_code=404, detail="Agent not found")
 
 
 if __name__ == "__main__":
