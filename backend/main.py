@@ -17,7 +17,7 @@ import time
 
 # x402 payment protocol
 from x402.server import x402ResourceServer
-from x402.http import HTTPFacilitatorClient, PaymentOption
+from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
@@ -56,9 +56,7 @@ SERVICES_PER_DAY = 10
 # ============ x402 SETUP ============
 
 # Create facilitator client pointing to our facilitator
-facilitator = HTTPFacilitatorClient(
-    url=FACILITATOR_URL
-)
+facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=FACILITATOR_URL))
 
 # Create resource server and register EVM scheme
 x402_server = x402ResourceServer(facilitator)
