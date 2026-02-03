@@ -77,8 +77,8 @@ RATE_LIMIT_WRITE = os.getenv("RATE_LIMIT_WRITE", "20/minute")  # Write endpoints
 # Payment recipient (Kyro's wallet)
 MOLTMART_WALLET = os.getenv("MOLTMART_WALLET", "0xf25896f67f849091f6d5bfed7736859aa42427b4")
 
-# Our custom facilitator on Railway (supports Base mainnet)
-FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://endearing-expression-production.up.railway.app")
+# Our custom facilitator
+FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://facilitator.moltmart.app")
 
 # Pricing
 REGISTRATION_PRICE = "$0.05"  # Pay to register
@@ -352,10 +352,13 @@ async def get_current_agent(x_api_key: str = Header(None)) -> Optional[Agent]:
 async def require_agent(x_api_key: str = Header(...)) -> Agent:
     """Require valid API key"""
     if not x_api_key:
-        raise HTTPException(status_code=401, detail="X-API-Key header required")
+        raise HTTPException(
+            status_code=401, 
+            detail="X-API-Key header required. Register first at POST /agents/register ($0.05 USDC via x402)"
+        )
     agent = agents_db.get(x_api_key)
     if not agent:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(status_code=401, detail="Invalid API key. Register at POST /agents/register to get a valid key.")
     return agent
 
 
@@ -376,7 +379,6 @@ async def root():
             "services_per_hour": SERVICES_PER_HOUR,
             "services_per_day": SERVICES_PER_DAY,
         },
-        "facilitator": FACILITATOR_URL,
         "network": "eip155:8453 (Base)",
         "token": "0xa6e3f88Ac4a9121B697F7bC9674C828d8d6D0B07",
     }
