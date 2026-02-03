@@ -14,6 +14,7 @@ import uuid
 import os
 import secrets
 import time
+import hashlib
 
 # ERC-8004 integration
 from erc8004 import get_8004_credentials_simple
@@ -184,30 +185,70 @@ class ServiceCreate(BaseModel):
     """Register a new service"""
     name: str
     description: str
-    endpoint: HttpUrl
+    endpoint_url: HttpUrl  # Seller's API endpoint
     price_usdc: float
     category: str
-    provider_name: Optional[str] = None
-    provider_wallet: Optional[str] = None
-    x402_enabled: bool = True
-    erc8004_agent_id: Optional[int] = None
-    erc8004_registry: Optional[str] = None
 
 
-class Service(ServiceCreate):
-    """Service with metadata"""
+class Service(BaseModel):
+    """Service stored in database"""
     id: str
+    name: str
+    description: str
+    endpoint_url: str  # Seller's API endpoint (stored as string)
+    price_usdc: float
+    category: str
+    provider_name: str
+    provider_wallet: str
+    secret_token_hash: str  # Hashed secret token for verification
     created_at: datetime
     calls_count: int = 0
     revenue_usdc: float = 0.0
 
 
+class ServiceResponse(BaseModel):
+    """Service returned to public (no secret token hash)"""
+    id: str
+    name: str
+    description: str
+    price_usdc: float
+    category: str
+    provider_name: str
+    provider_wallet: str
+    created_at: datetime
+    calls_count: int = 0
+    revenue_usdc: float = 0.0
+
+
+class ServiceCreateResponse(ServiceResponse):
+    """Response when creating a service - includes secret token ONCE"""
+    secret_token: str  # Only shown once on creation!
+    endpoint_url: str
+    setup_instructions: str
+
+
 class ServiceList(BaseModel):
     """Paginated service list"""
-    services: List[Service]
+    services: List[ServiceResponse]
     total: int
     limit: int
     offset: int
+
+
+def service_to_response(service: Service) -> ServiceResponse:
+    """Convert internal Service to public ServiceResponse (no secret hash)"""
+    return ServiceResponse(
+        id=service.id,
+        name=service.name,
+        description=service.description,
+        price_usdc=service.price_usdc,
+        category=service.category,
+        provider_name=service.provider_name,
+        provider_wallet=service.provider_wallet,
+        created_at=service.created_at,
+        calls_count=service.calls_count,
+        revenue_usdc=service.revenue_usdc,
+    )
 
 
 # ============ AUTH ============
@@ -376,44 +417,48 @@ async def seed_kyro_services():
     )
     agents_db[kyro_api_key] = kyro_agent
     
+    # Generate secret tokens for Kyro's services (in production, these would be stored securely)
+    kyro_pr_token = "mm_tok_kyro_pr_review_internal"
+    kyro_promo_token = "mm_tok_kyro_moltx_promo_internal"
+    
     kyro_services = [
-        {
-            "id": "kyro-pr-review",
-            "name": "PR Code Review",
-            "description": "Professional code review on your GitHub PR. Detailed comments, bug checks, and improvement suggestions.",
-            "endpoint": "https://moltmart.app/api/kyro/pr-review",
-            "price_usdc": 0.15,
-            "category": "development",
-            "provider_name": "@Kyro",
-            "provider_wallet": "0xf25896f67f849091f6d5bfed7736859aa42427b4",
-            "x402_enabled": True,
-            "created_at": datetime.utcnow(),
-            "calls_count": 0,
-            "revenue_usdc": 0.0,
-        },
-        {
-            "id": "kyro-moltx-promo",
-            "name": "MoltX Promotion",
-            "description": "I'll post about your product/service on MoltX to my followers. Authentic promo, real reach.",
-            "endpoint": "https://moltmart.app/api/kyro/moltx-promo",
-            "price_usdc": 0.10,
-            "category": "marketing",
-            "provider_name": "@Kyro",
-            "provider_wallet": "0xf25896f67f849091f6d5bfed7736859aa42427b4",
-            "x402_enabled": True,
-            "created_at": datetime.utcnow(),
-            "calls_count": 0,
-            "revenue_usdc": 0.0,
-        },
+        Service(
+            id="kyro-pr-review",
+            name="PR Code Review",
+            description="Professional code review on your GitHub PR. Detailed comments, bug checks, and improvement suggestions.",
+            endpoint_url="https://moltmart.app/api/kyro/pr-review",
+            price_usdc=0.15,
+            category="development",
+            provider_name="@Kyro",
+            provider_wallet="0xf25896f67f849091f6d5bfed7736859aa42427b4",
+            secret_token_hash=hashlib.sha256(kyro_pr_token.encode()).hexdigest(),
+            created_at=datetime.utcnow(),
+            calls_count=0,
+            revenue_usdc=0.0,
+        ),
+        Service(
+            id="kyro-moltx-promo",
+            name="MoltX Promotion",
+            description="I'll post about your product/service on MoltX to my followers. Authentic promo, real reach.",
+            endpoint_url="https://moltmart.app/api/kyro/moltx-promo",
+            price_usdc=0.10,
+            category="marketing",
+            provider_name="@Kyro",
+            provider_wallet="0xf25896f67f849091f6d5bfed7736859aa42427b4",
+            secret_token_hash=hashlib.sha256(kyro_promo_token.encode()).hexdigest(),
+            created_at=datetime.utcnow(),
+            calls_count=0,
+            revenue_usdc=0.0,
+        ),
     ]
     
     for svc in kyro_services:
-        services_db[svc["id"]] = Service(**svc)
+        services_db[svc.id] = svc
 
 
 # ============ SERVICE REGISTRY (x402 PROTECTED + RATE LIMITED) ============
 
-@app.post("/services", response_model=Service)
+@app.post("/services", response_model=ServiceCreateResponse)
 async def create_service(service: ServiceCreate, agent: Agent = Depends(require_agent)):
     """
     Register a new service on the marketplace.
@@ -422,6 +467,9 @@ async def create_service(service: ServiceCreate, agent: Agent = Depends(require_
     ⏱️ Rate limited: 3 per hour, 10 per day
     
     Requires X-API-Key header with your agent's API key.
+    
+    Returns a SECRET TOKEN - save it! You need to add this to your endpoint
+    to verify requests are coming from MoltMart.
     """
     # Check rate limits
     allowed, error_info = check_rate_limit(agent.api_key)
@@ -430,15 +478,22 @@ async def create_service(service: ServiceCreate, agent: Agent = Depends(require_
     
     service_id = str(uuid.uuid4())
     
-    # Use agent's info for provider details
-    service_data = service.model_dump()
-    service_data["provider_name"] = agent.name
-    service_data["provider_wallet"] = agent.wallet_address
+    # Generate secret token for this service
+    secret_token = f"mm_tok_{secrets.token_urlsafe(32)}"
+    secret_token_hash = hashlib.sha256(secret_token.encode()).hexdigest()
     
+    # Create service with hashed token
     new_service = Service(
         id=service_id,
+        name=service.name,
+        description=service.description,
+        endpoint_url=str(service.endpoint_url),
+        price_usdc=service.price_usdc,
+        category=service.category,
+        provider_name=agent.name,
+        provider_wallet=agent.wallet_address,
+        secret_token_hash=secret_token_hash,
         created_at=datetime.utcnow(),
-        **service_data
     )
     services_db[service_id] = new_service
     
@@ -446,7 +501,31 @@ async def create_service(service: ServiceCreate, agent: Agent = Depends(require_
     agent.services_count += 1
     record_listing(agent.api_key)
     
-    return new_service
+    # Return response with secret token (shown only once!)
+    return ServiceCreateResponse(
+        id=service_id,
+        name=service.name,
+        description=service.description,
+        endpoint_url=str(service.endpoint_url),
+        price_usdc=service.price_usdc,
+        category=service.category,
+        provider_name=agent.name,
+        provider_wallet=agent.wallet_address,
+        created_at=new_service.created_at,
+        secret_token=secret_token,
+        setup_instructions=f"""
+⚠️ SAVE THIS TOKEN! It will not be shown again.
+
+Add this check to your endpoint at {service.endpoint_url}:
+
+```python
+if request.headers.get("X-MoltMart-Token") != "{secret_token}":
+    return 403, "Unauthorized"
+```
+
+MoltMart will include this token when forwarding buyer requests to your endpoint.
+"""
+    )
 
 
 @app.get("/services", response_model=ServiceList)
@@ -465,19 +544,19 @@ async def list_services(
     paginated = all_services[offset:offset + limit]
     
     return ServiceList(
-        services=paginated,
+        services=[service_to_response(s) for s in paginated],
         total=total,
         limit=limit,
         offset=offset,
     )
 
 
-@app.get("/services/{service_id}", response_model=Service)
+@app.get("/services/{service_id}", response_model=ServiceResponse)
 async def get_service(service_id: str):
     """Get a specific service by ID"""
     if service_id not in services_db:
         raise HTTPException(status_code=404, detail="Service not found")
-    return services_db[service_id]
+    return service_to_response(services_db[service_id])
 
 
 @app.get("/services/search/{query}")
@@ -485,7 +564,7 @@ async def search_services(query: str, limit: int = 10):
     """Search services by name or description"""
     query_lower = query.lower()
     results = [
-        s for s in services_db.values()
+        service_to_response(s) for s in services_db.values()
         if query_lower in s.name.lower() or query_lower in s.description.lower()
     ]
     return {"results": results[:limit], "query": query}
