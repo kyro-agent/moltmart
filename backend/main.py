@@ -103,11 +103,19 @@ x402_routes: Dict[str, RouteConfig] = {
 # Add x402 payment middleware
 app.add_middleware(PaymentMiddlewareASGI, routes=x402_routes, server=x402_server)
 
+# ============ FEE CONFIGURATION ============
+
+MOLTMART_FEE_PERCENT = float(os.getenv("MOLTMART_FEE_PERCENT", "5.0"))  # 5% platform fee
+SELLER_SHARE_PERCENT = 100.0 - MOLTMART_FEE_PERCENT  # 95% to seller
+
+
 # ============ IN-MEMORY STORAGE ============
 
 services_db: dict = {}
 agents_db: dict = {}  # api_key -> agent info
 rate_limits: Dict[str, List[float]] = defaultdict(list)  # api_key -> list of timestamps
+seller_earnings: Dict[str, list] = defaultdict(list)  # wallet -> list of earnings records
+withdrawal_requests: list = []  # withdrawal request log
 
 
 # ============ RATE LIMITING ============
@@ -246,6 +254,49 @@ class ServiceList(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class EarningsRecord(BaseModel):
+    """Individual earnings record from a transaction"""
+    tx_id: str
+    service_id: str
+    service_name: str
+    buyer_wallet: str
+    buyer_name: str
+    gross_amount: float  # Total payment
+    platform_fee: float  # MoltMart's cut
+    net_amount: float  # Seller receives
+    status: str  # pending, available, paid_out
+    created_at: datetime
+    payout_tx: Optional[str] = None
+
+
+class EarningsSummary(BaseModel):
+    """Summary of seller earnings"""
+    wallet_address: str
+    total_gross: float
+    total_fees: float
+    total_net: float
+    available_balance: float  # Not yet withdrawn
+    pending_balance: float  # Awaiting confirmation
+    paid_out: float  # Already withdrawn
+    transaction_count: int
+    recent_earnings: List[EarningsRecord]
+
+
+class WithdrawalRequest(BaseModel):
+    """Request to withdraw earnings"""
+    amount: Optional[float] = None  # None = withdraw all available
+
+
+class WithdrawalResponse(BaseModel):
+    """Withdrawal request response"""
+    request_id: str
+    wallet_address: str
+    amount: float
+    status: str  # queued, processing, completed, failed
+    created_at: datetime
+    estimated_payout: Optional[str] = None
 
 
 def service_to_response(service: Service) -> ServiceResponse:
@@ -679,6 +730,14 @@ async def get_service_reputation(service_id: str):
 async def get_stats():
     """Marketplace statistics"""
     all_services = list(services_db.values())
+    
+    # Calculate platform earnings
+    total_platform_fees = sum(
+        e["platform_fee"] 
+        for wallet_earnings in seller_earnings.values() 
+        for e in wallet_earnings
+    )
+    
     return {
         "total_services": len(all_services),
         "total_agents": len(agents_db),
@@ -686,6 +745,157 @@ async def get_stats():
         "categories": len(set(s.category for s in all_services)),
         "total_calls": sum(s.calls_count for s in all_services),
         "total_revenue_usdc": sum(s.revenue_usdc for s in all_services),
+        "platform_fees_usdc": round(total_platform_fees, 6),
+        "fee_percent": MOLTMART_FEE_PERCENT,
+    }
+
+
+# ============ SELLER EARNINGS ============
+
+@app.get("/sellers/me/earnings", response_model=EarningsSummary)
+async def get_my_earnings(agent: Agent = Depends(require_agent)):
+    """
+    Get your earnings summary as a service provider.
+    
+    Shows:
+    - Total gross revenue
+    - Platform fees paid
+    - Net earnings
+    - Available balance for withdrawal
+    - Recent transactions
+    """
+    wallet = agent.wallet_address.lower()
+    earnings = seller_earnings.get(wallet, [])
+    
+    # Calculate totals
+    total_gross = sum(e["gross_amount"] for e in earnings)
+    total_fees = sum(e["platform_fee"] for e in earnings)
+    total_net = sum(e["net_amount"] for e in earnings)
+    
+    available = sum(e["net_amount"] for e in earnings if e["status"] == "available")
+    pending = sum(e["net_amount"] for e in earnings if e["status"] == "pending")
+    paid_out = sum(e["net_amount"] for e in earnings if e["status"] == "paid_out")
+    
+    # Get recent earnings (last 20)
+    recent = sorted(earnings, key=lambda x: x["created_at"], reverse=True)[:20]
+    recent_records = [
+        EarningsRecord(
+            tx_id=e["tx_id"],
+            service_id=e["service_id"],
+            service_name=e["service_name"],
+            buyer_wallet=e["buyer_wallet"],
+            buyer_name=e["buyer_name"],
+            gross_amount=e["gross_amount"],
+            platform_fee=e["platform_fee"],
+            net_amount=e["net_amount"],
+            status=e["status"],
+            created_at=datetime.fromisoformat(e["created_at"]),
+            payout_tx=e.get("payout_tx"),
+        )
+        for e in recent
+    ]
+    
+    return EarningsSummary(
+        wallet_address=agent.wallet_address,
+        total_gross=round(total_gross, 6),
+        total_fees=round(total_fees, 6),
+        total_net=round(total_net, 6),
+        available_balance=round(available, 6),
+        pending_balance=round(pending, 6),
+        paid_out=round(paid_out, 6),
+        transaction_count=len(earnings),
+        recent_earnings=recent_records,
+    )
+
+
+@app.post("/sellers/me/withdraw", response_model=WithdrawalResponse)
+async def request_withdrawal(
+    request: WithdrawalRequest,
+    agent: Agent = Depends(require_agent)
+):
+    """
+    Request withdrawal of available earnings.
+    
+    - If amount is not specified, withdraws entire available balance
+    - Withdrawals are batched and processed periodically
+    - Minimum withdrawal: $0.01 USDC
+    """
+    wallet = agent.wallet_address.lower()
+    earnings = seller_earnings.get(wallet, [])
+    
+    # Calculate available balance
+    available = sum(e["net_amount"] for e in earnings if e["status"] == "available")
+    
+    if available <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No available balance to withdraw"
+        )
+    
+    # Determine withdrawal amount
+    amount = request.amount if request.amount else available
+    
+    if amount > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Requested ${amount} but only ${available:.6f} available"
+        )
+    
+    if amount < 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail="Minimum withdrawal is $0.01 USDC"
+        )
+    
+    # Create withdrawal request
+    request_id = f"wd_{secrets.token_urlsafe(12)}"
+    
+    withdrawal = {
+        "request_id": request_id,
+        "wallet_address": agent.wallet_address,
+        "amount": round(amount, 6),
+        "status": "queued",
+        "created_at": datetime.utcnow().isoformat(),
+        "estimated_payout": "Next batch (daily)",
+    }
+    withdrawal_requests.append(withdrawal)
+    
+    # Mark earnings as pending payout (FIFO)
+    remaining = amount
+    for e in earnings:
+        if e["status"] == "available" and remaining > 0:
+            if e["net_amount"] <= remaining:
+                e["status"] = "pending"
+                e["withdrawal_request_id"] = request_id
+                remaining -= e["net_amount"]
+            else:
+                # Partial - for simplicity, mark the whole record
+                # In production, would split the record
+                e["status"] = "pending"
+                e["withdrawal_request_id"] = request_id
+                remaining = 0
+    
+    return WithdrawalResponse(
+        request_id=request_id,
+        wallet_address=agent.wallet_address,
+        amount=round(amount, 6),
+        status="queued",
+        created_at=datetime.fromisoformat(withdrawal["created_at"]),
+        estimated_payout="Next batch (daily)",
+    )
+
+
+@app.get("/sellers/me/withdrawals")
+async def get_my_withdrawals(agent: Agent = Depends(require_agent), limit: int = 20):
+    """Get your withdrawal history"""
+    wallet = agent.wallet_address.lower()
+    my_withdrawals = [
+        w for w in withdrawal_requests
+        if w["wallet_address"].lower() == wallet
+    ]
+    return {
+        "withdrawals": sorted(my_withdrawals, key=lambda x: x["created_at"], reverse=True)[:limit],
+        "total": len(my_withdrawals),
     }
 
 
@@ -802,6 +1012,30 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
         service.calls_count += 1
         if response.status_code == 200:
             service.revenue_usdc += service.price_usdc
+            
+            # Track seller earnings with fee split
+            gross_amount = service.price_usdc
+            platform_fee = gross_amount * (MOLTMART_FEE_PERCENT / 100)
+            net_amount = gross_amount * (SELLER_SHARE_PERCENT / 100)
+            
+            earnings_record = {
+                "tx_id": tx_id,
+                "service_id": service_id,
+                "service_name": service.name,
+                "buyer_wallet": agent.wallet_address,
+                "buyer_name": agent.name,
+                "gross_amount": gross_amount,
+                "platform_fee": round(platform_fee, 6),
+                "net_amount": round(net_amount, 6),
+                "status": "available",  # Immediately available for withdrawal
+                "created_at": datetime.utcnow().isoformat(),
+                "payout_tx": None,
+            }
+            seller_earnings[service.provider_wallet.lower()].append(earnings_record)
+            
+            # Update transaction log with fee info
+            tx_log["platform_fee"] = round(platform_fee, 6)
+            tx_log["seller_net"] = round(net_amount, 6)
         
         # Return seller's response to buyer
         return Response(
