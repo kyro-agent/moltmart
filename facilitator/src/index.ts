@@ -146,11 +146,16 @@ console.log(`📡 Registered network: ${BASE_NETWORK} (Base mainnet)`);
 const app = express();
 app.use(express.json());
 
-// CORS for MoltMart frontend
+// CORS for MoltMart frontend - restrict to known origins
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || "https://moltmart.app,http://localhost:3000").split(",");
+
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+  }
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.header("Access-Control-Allow-Headers", "Content-Type, X-Payment, X-Payment-Response");
   if (req.method === "OPTIONS") {
     return res.sendStatus(200);
   }

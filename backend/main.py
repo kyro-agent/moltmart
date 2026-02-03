@@ -6,8 +6,9 @@ x402-native marketplace for agent services
 from fastapi import FastAPI, HTTPException, Header, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, validator
 from typing import Optional, List, Dict
+import re
 from datetime import datetime, timedelta
 from collections import defaultdict
 import uuid
@@ -28,13 +29,15 @@ app = FastAPI(
     version="0.2.0",
 )
 
-# CORS for frontend
+# CORS for frontend - restrict to known origins
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "https://moltmart.app,http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key", "X-Payment", "X-Payment-Response"],
 )
 
 # ============ CONFIGURATION ============
@@ -154,6 +157,13 @@ class AgentRegister(BaseModel):
     description: Optional[str] = None
     moltx_handle: Optional[str] = None
     github_handle: Optional[str] = None
+    
+    @validator('wallet_address')
+    def validate_eth_address(cls, v):
+        """Validate Ethereum address format"""
+        if not re.match(r'^0x[a-fA-F0-9]{40}$', v):
+            raise ValueError('Invalid Ethereum address format')
+        return v.lower()  # normalize to lowercase
 
 
 class Agent(AgentRegister):
@@ -289,7 +299,8 @@ async def get_my_agent(agent: Agent = Depends(require_agent)):
 @app.on_event("startup")
 async def seed_kyro_services():
     """Seed Kyro's services on startup"""
-    kyro_api_key = "mm_kyro_internal"
+    # Use env var or generate a secure random key for seed data
+    kyro_api_key = os.getenv("KYRO_SEED_API_KEY", f"mm_{secrets.token_urlsafe(32)}")
     
     # Create Kyro's agent (pre-registered, no payment needed for seed)
     kyro_agent = Agent(
