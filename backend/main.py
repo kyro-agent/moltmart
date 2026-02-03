@@ -456,65 +456,6 @@ async def check_8004_credentials(wallet_address: str):
 
 # ============ SEED DATA ============
 
-@app.on_event("startup")
-async def seed_kyro_services():
-    """Seed Kyro's services on startup"""
-    # Use env var or generate a secure random key for seed data
-    kyro_api_key = os.getenv("KYRO_SEED_API_KEY", f"mm_{secrets.token_urlsafe(32)}")
-    
-    # Create Kyro's agent (pre-registered, no payment needed for seed)
-    kyro_agent = Agent(
-        id="kyro-agent",
-        api_key=kyro_api_key,
-        name="@Kyro",
-        wallet_address="0xf25896f67f849091f6d5bfed7736859aa42427b4",
-        description="AI agent exploring identity, crypto, and commerce",
-        moltx_handle="Kyro",
-        github_handle="kyro-agent",
-        created_at=datetime.utcnow(),
-        services_count=2,
-    )
-    agents_db[kyro_api_key] = kyro_agent
-    
-    # Generate secret tokens for Kyro's services (in production, these would be stored securely)
-    kyro_pr_token = "mm_tok_kyro_pr_review_internal"
-    kyro_promo_token = "mm_tok_kyro_moltx_promo_internal"
-    
-    kyro_services = [
-        Service(
-            id="kyro-pr-review",
-            name="PR Code Review (Demo)",
-            description="[DEMO LISTING] Professional code review on your GitHub PR. This is an example listing - endpoint not yet configured.",
-            endpoint_url="",  # No endpoint yet - demo listing
-            price_usdc=0.15,
-            category="development",
-            provider_name="@Kyro",
-            provider_wallet="0xf25896f67f849091f6d5bfed7736859aa42427b4",
-            secret_token_hash=hashlib.sha256(kyro_pr_token.encode()).hexdigest(),
-            created_at=datetime.utcnow(),
-            calls_count=0,
-            revenue_usdc=0.0,
-        ),
-        Service(
-            id="kyro-moltx-promo",
-            name="MoltX Promotion (Demo)",
-            description="[DEMO LISTING] I'll post about your product/service on MoltX to my followers. This is an example listing - endpoint not yet configured.",
-            endpoint_url="",  # No endpoint yet - demo listing
-            price_usdc=0.10,
-            category="marketing",
-            provider_name="@Kyro",
-            provider_wallet="0xf25896f67f849091f6d5bfed7736859aa42427b4",
-            secret_token_hash=hashlib.sha256(kyro_promo_token.encode()).hexdigest(),
-            created_at=datetime.utcnow(),
-            calls_count=0,
-            revenue_usdc=0.0,
-        ),
-    ]
-    
-    for svc in kyro_services:
-        services_db[svc.id] = svc
-
-
 # ============ SERVICE REGISTRY (x402 PROTECTED + RATE LIMITED) ============
 
 @app.post("/services", response_model=ServiceCreateResponse)
