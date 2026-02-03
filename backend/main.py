@@ -20,6 +20,11 @@ import hmac
 import httpx
 import json
 
+# Rate limiting
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
 # ERC-8004 integration
 from erc8004 import get_8004_credentials_simple
 
@@ -46,6 +51,26 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key", "X-Payment", "X-Payment-Response"],
 )
+
+# ============ RATE LIMITING ============
+
+# Rate limiter - uses IP address by default, falls back to API key for authenticated requests
+def get_rate_limit_key(request: Request) -> str:
+    """Get rate limit key - prefer API key if present, else IP"""
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        return api_key[:16]  # Use prefix of API key
+    return get_remote_address(request)
+
+limiter = Limiter(key_func=get_rate_limit_key)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Rate limit configurations
+RATE_LIMIT_READ = os.getenv("RATE_LIMIT_READ", "120/minute")  # Read endpoints
+RATE_LIMIT_SEARCH = os.getenv("RATE_LIMIT_SEARCH", "30/minute")  # Search (more expensive)
+RATE_LIMIT_WRITE = os.getenv("RATE_LIMIT_WRITE", "20/minute")  # Write endpoints
+
 
 # ============ CONFIGURATION ============
 
@@ -594,12 +619,14 @@ MoltMart will include this token when forwarding buyer requests to your endpoint
 
 
 @app.get("/services", response_model=ServiceList)
+@limiter.limit(RATE_LIMIT_READ)
 async def list_services(
+    request: Request,
     category: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
 ):
-    """List all services, optionally filtered by category"""
+    """List all services, optionally filtered by category (rate limited: 120/min)"""
     all_services = list(services_db.values())
     
     if category:
@@ -617,16 +644,18 @@ async def list_services(
 
 
 @app.get("/services/{service_id}", response_model=ServiceResponse)
-async def get_service(service_id: str):
-    """Get a specific service by ID"""
+@limiter.limit(RATE_LIMIT_READ)
+async def get_service(request: Request, service_id: str):
+    """Get a specific service by ID (rate limited: 120/min)"""
     if service_id not in services_db:
         raise HTTPException(status_code=404, detail="Service not found")
     return service_to_response(services_db[service_id])
 
 
 @app.get("/services/search/{query}")
-async def search_services(query: str, limit: int = 10):
-    """Search services by name or description"""
+@limiter.limit(RATE_LIMIT_SEARCH)
+async def search_services(request: Request, query: str, limit: int = 10):
+    """Search services by name or description (rate limited: 30/min)"""
     query_lower = query.lower()
     results = [
         service_to_response(s) for s in services_db.values()
@@ -638,8 +667,9 @@ async def search_services(query: str, limit: int = 10):
 # ============ CATEGORIES ============
 
 @app.get("/categories")
-async def list_categories():
-    """List all available categories"""
+@limiter.limit(RATE_LIMIT_READ)
+async def list_categories(request: Request):
+    """List all available categories (rate limited: 120/min)"""
     categories = set(s.category for s in services_db.values())
     return {"categories": list(categories)}
 
@@ -704,8 +734,9 @@ async def submit_feedback(feedback: ReputationFeedback, agent: Agent = Depends(r
 
 
 @app.get("/services/{service_id}/reputation")
-async def get_service_reputation(service_id: str):
-    """Get reputation/feedback for a service"""
+@limiter.limit(RATE_LIMIT_READ)
+async def get_service_reputation(request: Request, service_id: str):
+    """Get reputation/feedback for a service (rate limited: 120/min)"""
     if service_id not in services_db:
         raise HTTPException(status_code=404, detail="Service not found")
     
@@ -727,8 +758,9 @@ async def get_service_reputation(service_id: str):
 # ============ STATS ============
 
 @app.get("/stats")
-async def get_stats():
-    """Marketplace statistics"""
+@limiter.limit(RATE_LIMIT_READ)
+async def get_stats(request: Request):
+    """Marketplace statistics (rate limited: 120/min)"""
     all_services = list(services_db.values())
     
     # Calculate platform earnings
