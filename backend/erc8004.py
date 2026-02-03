@@ -70,6 +70,7 @@ def register_agent(agent_uri: str, recipient_wallet: str = None) -> dict:
     Returns:
         dict with agentId (tokenId) and transaction hash
     """
+    print(f"🚀 register_agent called: uri={agent_uri[:50]}..., recipient={recipient_wallet}")
     if not identity_registry:
         return {"error": "Identity registry not configured"}
 
@@ -110,6 +111,7 @@ def register_agent(agent_uri: str, recipient_wallet: str = None) -> dict:
 
         # Transfer NFT to recipient if specified
         transfer_tx_hash = None
+        print(f"🔍 Transfer check: recipient_wallet={recipient_wallet}, agent_id={agent_id}")
         if recipient_wallet and agent_id is not None:
             try:
                 recipient = Web3.to_checksum_address(recipient_wallet)

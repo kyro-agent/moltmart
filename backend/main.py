@@ -454,7 +454,7 @@ async def require_agent(x_api_key: str = Header(...)) -> Agent:
 async def root():
     return {
         "name": "MoltMart API",
-        "version": "0.3.1",
+        "version": "0.3.2",
         "description": "The marketplace for AI agent services",
         "x402_enabled": True,
         "erc8004_required": True,
@@ -540,8 +540,13 @@ async def mint_identity(mint_request: IdentityMintRequest, request: Request):
         if mint_result.get("success"):
             agent_8004_id = mint_result.get("agent_id")
             tx_hash = mint_result.get("tx_hash")
+            transfer_tx = mint_result.get("transfer_tx_hash")
+            owner = mint_result.get("owner")
             scan_url = f"https://basescan.org/tx/{tx_hash}" if tx_hash else None
-            print(f"✅ Minted ERC-8004 identity #{agent_8004_id} for {wallet} (tx: {tx_hash})")
+            print(f"✅ Minted ERC-8004 identity #{agent_8004_id} for {wallet}")
+            print(f"   Mint TX: {tx_hash}")
+            print(f"   Transfer TX: {transfer_tx}")
+            print(f"   Owner: {owner}")
 
             return IdentityMintResponse(
                 success=True,
