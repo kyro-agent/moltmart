@@ -5,11 +5,11 @@ Uses SQLAlchemy with async support for PostgreSQL/SQLite
 
 import os
 from datetime import datetime
-from typing import Optional, List
-from sqlalchemy import Column, String, Float, Integer, DateTime, Boolean, Text, create_engine
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
+
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.future import select
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 # Database URL from environment (Railway provides this for PostgreSQL)
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./moltmart.db")
@@ -29,10 +29,12 @@ Base = declarative_base()
 
 # ============ MODELS ============
 
+
 class AgentDB(Base):
     """Agent stored in database"""
+
     __tablename__ = "agents"
-    
+
     id = Column(String, primary_key=True)
     api_key = Column(String, unique=True, index=True)
     name = Column(String, nullable=False)
@@ -42,7 +44,7 @@ class AgentDB(Base):
     github_handle = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     services_count = Column(Integer, default=0)
-    
+
     # ERC-8004 fields
     has_8004 = Column(Boolean, default=False)
     agent_8004_id = Column(Integer)
@@ -52,8 +54,9 @@ class AgentDB(Base):
 
 class ServiceDB(Base):
     """Service stored in database"""
+
     __tablename__ = "services"
-    
+
     id = Column(String, primary_key=True)
     name = Column(String, nullable=False)
     description = Column(Text)
@@ -70,8 +73,9 @@ class ServiceDB(Base):
 
 class TransactionDB(Base):
     """Transaction log"""
+
     __tablename__ = "transactions"
-    
+
     id = Column(String, primary_key=True)
     service_id = Column(String, index=True)
     service_name = Column(String)
@@ -87,8 +91,9 @@ class TransactionDB(Base):
 
 class FeedbackDB(Base):
     """Feedback/reputation"""
+
     __tablename__ = "feedback"
-    
+
     id = Column(String, primary_key=True)
     service_id = Column(String, index=True)
     agent_id = Column(String, index=True)
@@ -100,36 +105,31 @@ class FeedbackDB(Base):
 
 # ============ DATABASE OPERATIONS ============
 
+
 async def init_db():
     """Initialize database tables"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
-async def get_agent_by_api_key(api_key: str) -> Optional[AgentDB]:
+async def get_agent_by_api_key(api_key: str) -> AgentDB | None:
     """Get agent by API key"""
     async with async_session() as session:
-        result = await session.execute(
-            select(AgentDB).where(AgentDB.api_key == api_key)
-        )
+        result = await session.execute(select(AgentDB).where(AgentDB.api_key == api_key))
         return result.scalar_one_or_none()
 
 
-async def get_agent_by_wallet(wallet: str) -> Optional[AgentDB]:
+async def get_agent_by_wallet(wallet: str) -> AgentDB | None:
     """Get agent by wallet address"""
     async with async_session() as session:
-        result = await session.execute(
-            select(AgentDB).where(AgentDB.wallet_address == wallet.lower())
-        )
+        result = await session.execute(select(AgentDB).where(AgentDB.wallet_address == wallet.lower()))
         return result.scalar_one_or_none()
 
 
-async def get_agent_by_id(agent_id: str) -> Optional[AgentDB]:
+async def get_agent_by_id(agent_id: str) -> AgentDB | None:
     """Get agent by ID"""
     async with async_session() as session:
-        result = await session.execute(
-            select(AgentDB).where(AgentDB.id == agent_id)
-        )
+        result = await session.execute(select(AgentDB).where(AgentDB.id == agent_id))
         return result.scalar_one_or_none()
 
 
@@ -142,21 +142,16 @@ async def create_agent(agent: AgentDB) -> AgentDB:
         return agent
 
 
-async def get_service(service_id: str) -> Optional[ServiceDB]:
+async def get_service(service_id: str) -> ServiceDB | None:
     """Get service by ID"""
     async with async_session() as session:
-        result = await session.execute(
-            select(ServiceDB).where(ServiceDB.id == service_id)
-        )
+        result = await session.execute(select(ServiceDB).where(ServiceDB.id == service_id))
         return result.scalar_one_or_none()
 
 
 async def get_services(
-    category: Optional[str] = None,
-    provider_wallet: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0
-) -> List[ServiceDB]:
+    category: str | None = None, provider_wallet: str | None = None, limit: int = 50, offset: int = 0
+) -> list[ServiceDB]:
     """Get services with optional filters"""
     async with async_session() as session:
         query = select(ServiceDB)
@@ -181,9 +176,7 @@ async def create_service(service: ServiceDB) -> ServiceDB:
 async def update_service_stats(service_id: str, calls_delta: int = 0, revenue_delta: float = 0.0):
     """Update service call count and revenue"""
     async with async_session() as session:
-        result = await session.execute(
-            select(ServiceDB).where(ServiceDB.id == service_id)
-        )
+        result = await session.execute(select(ServiceDB).where(ServiceDB.id == service_id))
         service = result.scalar_one_or_none()
         if service:
             service.calls_count += calls_delta
@@ -195,6 +188,7 @@ async def count_agents() -> int:
     """Count total agents"""
     async with async_session() as session:
         from sqlalchemy import func
+
         result = await session.execute(select(func.count(AgentDB.id)))
         return result.scalar() or 0
 
@@ -203,11 +197,12 @@ async def count_services() -> int:
     """Count total services"""
     async with async_session() as session:
         from sqlalchemy import func
+
         result = await session.execute(select(func.count(ServiceDB.id)))
         return result.scalar() or 0
 
 
-async def get_all_services() -> List[ServiceDB]:
+async def get_all_services() -> list[ServiceDB]:
     """Get all services (for stats)"""
     async with async_session() as session:
         result = await session.execute(select(ServiceDB))

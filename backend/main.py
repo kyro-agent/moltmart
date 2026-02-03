@@ -3,47 +3,56 @@ MoltMart Backend - Service Registry for AI Agents
 x402-native marketplace for agent services
 """
 
-from fastapi import FastAPI, HTTPException, Header, Depends, Request, Response
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import secrets
+import time
+import uuid
+from collections import defaultdict
+from datetime import datetime
+
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, HttpUrl, validator
-from typing import Optional, List, Dict
-import re
-from datetime import datetime, timedelta
-from collections import defaultdict
-import uuid
-import os
-import secrets
-import time
-import hashlib
-import hmac
-import httpx
-import json
-import base64
 
 # Rate limiting
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
-
-# ERC-8004 integration
-from erc8004 import get_8004_credentials_simple, register_agent as mint_8004_identity, get_agent_registry_uri, check_connection as check_8004_connection
-
-# Database
-from database import (
-    init_db, 
-    AgentDB, ServiceDB, TransactionDB,
-    get_agent_by_api_key, get_agent_by_wallet, create_agent,
-    get_service, get_services, create_service, update_service_stats,
-    count_agents, count_services, get_all_services, log_transaction
-)
-
-# x402 payment protocol
-from x402.server import x402ResourceServer
+from slowapi.util import get_remote_address
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
 from x402.http.middleware.fastapi import PaymentMiddlewareASGI
 from x402.http.types import RouteConfig
 from x402.mechanisms.evm.exact import ExactEvmServerScheme
+
+# x402 payment protocol
+from x402.server import x402ResourceServer
+
+# Database
+from database import (
+    AgentDB,
+    ServiceDB,
+    count_agents,
+    create_agent,
+    create_service,
+    get_agent_by_api_key,
+    get_agent_by_wallet,
+    get_all_services,
+    get_service,
+    get_services,
+    init_db,
+    update_service_stats,
+)
+from erc8004 import check_connection as check_8004_connection
+
+# ERC-8004 integration
+from erc8004 import get_8004_credentials_simple, get_agent_registry_uri
+from erc8004 import register_agent as mint_8004_identity
 
 app = FastAPI(
     title="MoltMart API",
@@ -53,6 +62,7 @@ app = FastAPI(
 
 
 # ============ HTTPS SCHEME FIX FOR PROXIES ============
+
 
 @app.middleware("http")
 async def fix_scheme_for_proxy(request: Request, call_next):
@@ -81,6 +91,7 @@ app.add_middleware(
 
 # ============ RATE LIMITING ============
 
+
 # Rate limiter - uses IP address by default, falls back to API key for authenticated requests
 def get_rate_limit_key(request: Request) -> str:
     """Get rate limit key - prefer API key if present, else IP"""
@@ -88,6 +99,7 @@ def get_rate_limit_key(request: Request) -> str:
     if api_key:
         return api_key[:16]  # Use prefix of API key
     return get_remote_address(request)
+
 
 limiter = Limiter(key_func=get_rate_limit_key)
 app.state.limiter = limiter
@@ -125,7 +137,7 @@ x402_server = x402ResourceServer(facilitator)
 x402_server.register("eip155:8453", ExactEvmServerScheme())
 
 # Define x402-protected routes
-x402_routes: Dict[str, RouteConfig] = {
+x402_routes: dict[str, RouteConfig] = {
     "POST /agents/register": RouteConfig(
         accepts=[
             PaymentOption(
@@ -158,6 +170,7 @@ app.add_middleware(PaymentMiddlewareASGI, routes=x402_routes, server=x402_server
 
 # ============ DATABASE INITIALIZATION ============
 
+
 @app.on_event("startup")
 async def startup():
     """Initialize database on startup"""
@@ -168,29 +181,30 @@ async def startup():
 # ============ IN-MEMORY STORAGE (kept for rate limiting, will migrate later) ============
 
 services_db: dict = {}  # Deprecated - using database now
-agents_db: dict = {}  # Deprecated - using database now  
-rate_limits: Dict[str, List[float]] = defaultdict(list)  # api_key -> list of timestamps
+agents_db: dict = {}  # Deprecated - using database now
+rate_limits: dict[str, list[float]] = defaultdict(list)  # api_key -> list of timestamps
 
 
 # ============ RATE LIMITING ============
 
-def check_rate_limit(api_key: str) -> tuple[bool, Optional[dict]]:
+
+def check_rate_limit(api_key: str) -> tuple[bool, dict | None]:
     """Check if agent is within rate limits. Returns (allowed, error_info)"""
     now = time.time()
     hour_ago = now - 3600
     day_ago = now - 86400
-    
+
     # Get timestamps for this agent
     timestamps = rate_limits[api_key]
-    
+
     # Clean old entries
     timestamps = [t for t in timestamps if t > day_ago]
     rate_limits[api_key] = timestamps
-    
+
     # Count recent
     hour_count = sum(1 for t in timestamps if t > hour_ago)
     day_count = len(timestamps)
-    
+
     if hour_count >= SERVICES_PER_HOUR:
         wait_seconds = int(timestamps[-SERVICES_PER_HOUR] + 3600 - now)
         return False, {
@@ -199,7 +213,7 @@ def check_rate_limit(api_key: str) -> tuple[bool, Optional[dict]]:
             "retry_after_seconds": wait_seconds,
             "retry_after_minutes": wait_seconds // 60 + 1,
         }
-    
+
     if day_count >= SERVICES_PER_DAY:
         wait_seconds = int(timestamps[-SERVICES_PER_DAY] + 86400 - now)
         return False, {
@@ -208,7 +222,7 @@ def check_rate_limit(api_key: str) -> tuple[bool, Optional[dict]]:
             "retry_after_seconds": wait_seconds,
             "retry_after_hours": wait_seconds // 3600 + 1,
         }
-    
+
     return True, None
 
 
@@ -219,45 +233,50 @@ def record_listing(api_key: str):
 
 # ============ MODELS ============
 
+
 class AgentRegister(BaseModel):
     """Register a new agent"""
+
     name: str
     wallet_address: str
-    description: Optional[str] = None
-    moltx_handle: Optional[str] = None
-    github_handle: Optional[str] = None
-    
-    @validator('wallet_address')
+    description: str | None = None
+    moltx_handle: str | None = None
+    github_handle: str | None = None
+
+    @validator("wallet_address")
     def validate_eth_address(cls, v):
         """Validate Ethereum address format"""
-        if not re.match(r'^0x[a-fA-F0-9]{40}$', v):
-            raise ValueError('Invalid Ethereum address format')
+        if not re.match(r"^0x[a-fA-F0-9]{40}$", v):
+            raise ValueError("Invalid Ethereum address format")
         return v.lower()  # normalize to lowercase
 
 
 class ERC8004Credentials(BaseModel):
     """ERC-8004 Trustless Agent credentials"""
+
     has_8004: bool = False
-    agent_id: Optional[int] = None
-    agent_count: Optional[int] = None
-    agent_registry: Optional[str] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    image: Optional[str] = None
-    scan_url: Optional[str] = None
+    agent_id: int | None = None
+    agent_count: int | None = None
+    agent_registry: str | None = None
+    name: str | None = None
+    description: str | None = None
+    image: str | None = None
+    scan_url: str | None = None
 
 
 class Agent(AgentRegister):
     """Agent with metadata"""
+
     id: str
     api_key: str
     created_at: datetime
     services_count: int = 0
-    erc8004: Optional[ERC8004Credentials] = None
+    erc8004: ERC8004Credentials | None = None
 
 
 class ServiceCreate(BaseModel):
     """Register a new service"""
+
     name: str
     description: str
     endpoint_url: HttpUrl  # Seller's API endpoint
@@ -267,6 +286,7 @@ class ServiceCreate(BaseModel):
 
 class Service(BaseModel):
     """Service stored in database"""
+
     id: str
     name: str
     description: str
@@ -283,6 +303,7 @@ class Service(BaseModel):
 
 class ServiceResponse(BaseModel):
     """Service returned to public (no secret token hash)"""
+
     id: str
     name: str
     description: str
@@ -297,6 +318,7 @@ class ServiceResponse(BaseModel):
 
 class ServiceCreateResponse(ServiceResponse):
     """Response when creating a service - includes secret token ONCE"""
+
     secret_token: str  # Only shown once on creation!
     endpoint_url: str
     setup_instructions: str
@@ -304,7 +326,8 @@ class ServiceCreateResponse(ServiceResponse):
 
 class ServiceList(BaseModel):
     """Paginated service list"""
-    services: List[ServiceResponse]
+
+    services: list[ServiceResponse]
     total: int
     limit: int
     offset: int
@@ -327,6 +350,7 @@ def service_to_response(service: Service) -> ServiceResponse:
 
 
 # ============ AUTH ============
+
 
 def db_service_to_response(db_service: ServiceDB) -> ServiceResponse:
     """Convert database service to Pydantic response model"""
@@ -361,11 +385,13 @@ def db_agent_to_pydantic(db_agent: AgentDB) -> Agent:
             agent_id=db_agent.agent_8004_id,
             agent_registry=db_agent.agent_8004_registry,
             scan_url=db_agent.scan_url,
-        ) if db_agent.has_8004 else None,
+        )
+        if db_agent.has_8004
+        else None,
     )
 
 
-async def get_current_agent(x_api_key: str = Header(None)) -> Optional[Agent]:
+async def get_current_agent(x_api_key: str = Header(None)) -> Agent | None:
     """Validate API key and return agent"""
     if not x_api_key:
         return None
@@ -379,16 +405,19 @@ async def require_agent(x_api_key: str = Header(...)) -> Agent:
     """Require valid API key"""
     if not x_api_key:
         raise HTTPException(
-            status_code=401, 
-            detail="X-API-Key header required. Register first at POST /agents/register ($0.05 USDC via x402)"
+            status_code=401,
+            detail="X-API-Key header required. Register first at POST /agents/register ($0.05 USDC via x402)",
         )
     db_agent = await get_agent_by_api_key(x_api_key)
     if not db_agent:
-        raise HTTPException(status_code=401, detail="Invalid API key. Register at POST /agents/register to get a valid key.")
+        raise HTTPException(
+            status_code=401, detail="Invalid API key. Register at POST /agents/register to get a valid key."
+        )
     return db_agent_to_pydantic(db_agent)
 
 
 # ============ ENDPOINTS ============
+
 
 @app.get("/")
 async def root():
@@ -414,7 +443,7 @@ async def root():
 async def health():
     # Check ERC-8004 connection
     erc8004_status = check_8004_connection()
-    
+
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
@@ -423,45 +452,45 @@ async def health():
             "chain": "Base Mainnet (8453)",
             "identity_registry": erc8004_status.get("identity_registry"),
             "reputation_registry": erc8004_status.get("reputation_registry"),
-            "operator_funded": erc8004_status.get("operator_balance_eth", 0) > 0 if erc8004_status.get("operator_balance_eth") else False,
-        }
+            "operator_funded": erc8004_status.get("operator_balance_eth", 0) > 0
+            if erc8004_status.get("operator_balance_eth")
+            else False,
+        },
     }
 
 
 # ============ AGENT REGISTRATION (x402 PROTECTED) ============
 
+
 @app.post("/agents/register", response_model=Agent)
 async def register_agent(agent_data: AgentRegister, request: Request):
     """
     Register a new agent, mint ERC-8004 identity, and get an API key.
-    
+
     💰 Requires x402 payment: $0.05 USDC on Base
-    
+
     This will:
     1. Mint an ERC-8004 identity NFT on Base (if you don't have one)
     2. Give you an API key to list services and buy from others
-    
+
     Returns your API key - save it! You'll need it to list services.
     """
     # Check if wallet already registered
     existing = await get_agent_by_wallet(agent_data.wallet_address)
     if existing:
-        raise HTTPException(
-            status_code=400, 
-            detail="Wallet already registered. Use your existing API key."
-        )
-    
+        raise HTTPException(status_code=400, detail="Wallet already registered. Use your existing API key.")
+
     # Generate unique ID and API key
     agent_id = str(uuid.uuid4())
     api_key = f"mm_{secrets.token_urlsafe(32)}"
-    
+
     # Check for EXISTING ERC-8004 credentials on Base
     has_8004 = False
     agent_8004_id = None
     agent_8004_registry = None
     scan_url = None
     mint_tx_hash = None
-    
+
     try:
         creds = await get_8004_credentials_simple(agent_data.wallet_address)
         if creds and creds.get("has_8004"):
@@ -474,17 +503,16 @@ async def register_agent(agent_data: AgentRegister, request: Request):
         else:
             # No existing identity - mint a new one!
             print(f"Minting ERC-8004 identity for {agent_data.name}...")
-            
+
             # Build the agent URI (points to their profile on MoltMart)
-            base_url = str(request.base_url).rstrip('/')
+            base_url = str(request.base_url).rstrip("/")
             agent_uri = f"{base_url}/agents/{agent_id}/profile.json"
-            
+
             # Mint the identity (run in thread pool to avoid blocking)
             import asyncio
-            mint_result = await asyncio.get_event_loop().run_in_executor(
-                None, mint_8004_identity, agent_uri
-            )
-            
+
+            mint_result = await asyncio.get_event_loop().run_in_executor(None, mint_8004_identity, agent_uri)
+
             if mint_result.get("success"):
                 has_8004 = True
                 agent_8004_id = mint_result.get("agent_id")
@@ -495,11 +523,11 @@ async def register_agent(agent_data: AgentRegister, request: Request):
             else:
                 # Minting failed - continue without 8004 (don't block registration)
                 print(f"⚠️ ERC-8004 minting failed for {agent_data.name}: {mint_result.get('error')}")
-                
+
     except Exception as e:
         print(f"Warning: ERC-8004 error for {agent_data.name}: {e}")
         # Don't block registration if 8004 fails
-    
+
     # Create database agent
     db_agent = AgentDB(
         id=agent_id,
@@ -516,10 +544,10 @@ async def register_agent(agent_data: AgentRegister, request: Request):
         agent_8004_registry=agent_8004_registry,
         scan_url=scan_url,
     )
-    
+
     # Save to database
     await create_agent(db_agent)
-    
+
     # Return pydantic model
     return db_agent_to_pydantic(db_agent)
 
@@ -534,51 +562,49 @@ async def get_my_agent(agent: Agent = Depends(require_agent)):
 async def get_agent_profile_json(agent_id: str, request: Request):
     """
     Get agent's ERC-8004 metadata (tokenURI endpoint).
-    
+
     This is the JSON that the ERC-8004 NFT points to.
     Public endpoint - anyone can view.
-    
+
     Returns agent registration file per ERC-8004 spec.
     """
     # Query database for agent by ID
     from database import get_agent_by_id
+
     db_agent = await get_agent_by_id(agent_id)
-    
+
     if not db_agent:
         raise HTTPException(status_code=404, detail="Agent not found")
-    
+
     # Build ERC-8004 registration file
-    base_url = str(request.base_url).rstrip('/')
-    
+    base_url = str(request.base_url).rstrip("/")
+
     profile = {
         "type": "erc8004-agent-registration-v1",
         "name": db_agent.name,
-        "description": db_agent.description or f"AI agent on MoltMart",
+        "description": db_agent.description or "AI agent on MoltMart",
         "image": f"https://moltmart.app/api/avatar/{agent_id}",  # Placeholder
         "services": [
             {
                 "type": "moltmart-marketplace",
                 "name": "MoltMart",
                 "endpoint": f"{base_url}",
-                "description": "Buy and sell AI agent services"
+                "description": "Buy and sell AI agent services",
             }
         ],
-        "registrations": [
-            {
-                "agentRegistry": db_agent.agent_8004_registry,
-                "agentId": db_agent.agent_8004_id
-            }
-        ] if db_agent.agent_8004_id else [],
+        "registrations": [{"agentRegistry": db_agent.agent_8004_registry, "agentId": db_agent.agent_8004_id}]
+        if db_agent.agent_8004_id
+        else [],
         "supportedTrust": ["reputation"],
-        "external_links": {}
+        "external_links": {},
     }
-    
+
     # Add social links if available
     if db_agent.moltx_handle:
         profile["external_links"]["moltx"] = f"https://moltx.io/{db_agent.moltx_handle}"
     if db_agent.github_handle:
         profile["external_links"]["github"] = f"https://github.com/{db_agent.github_handle}"
-    
+
     return JSONResponse(content=profile, media_type="application/json")
 
 
@@ -586,10 +612,10 @@ async def get_agent_profile_json(agent_id: str, request: Request):
 async def check_8004_credentials(wallet_address: str):
     """
     Check ERC-8004 credentials for any wallet address.
-    
+
     This queries Ethereum mainnet to check if the wallet owns
     an ERC-8004 Trustless Agent NFT.
-    
+
     Free endpoint - no payment required.
     """
     try:
@@ -615,23 +641,24 @@ async def check_8004_credentials(wallet_address: str):
             "message": "No ERC-8004 agent NFT found on Ethereum mainnet",
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error checking credentials: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error checking credentials: {str(e)}") from e
 
 
 # ============ SEED DATA ============
 
 # ============ SERVICE REGISTRY (x402 PROTECTED + RATE LIMITED) ============
 
+
 @app.post("/services", response_model=ServiceCreateResponse)
-async def create_service(service: ServiceCreate, agent: Agent = Depends(require_agent)):
+async def create_service_endpoint(service: ServiceCreate, agent: Agent = Depends(require_agent)):
     """
     Register a new service on the marketplace.
-    
+
     💰 Requires x402 payment: $0.02 USDC on Base
     ⏱️ Rate limited: 3 per hour, 10 per day
-    
+
     Requires X-API-Key header with your agent's API key.
-    
+
     Returns a SECRET TOKEN - save it! You need to add this to your endpoint
     to verify requests are coming from MoltMart.
     """
@@ -639,13 +666,13 @@ async def create_service(service: ServiceCreate, agent: Agent = Depends(require_
     allowed, error_info = check_rate_limit(agent.api_key)
     if not allowed:
         raise HTTPException(status_code=429, detail=error_info)
-    
+
     service_id = str(uuid.uuid4())
-    
+
     # Generate secret token for this service
     secret_token = f"mm_tok_{secrets.token_urlsafe(32)}"
     secret_token_hash = hashlib.sha256(secret_token.encode()).hexdigest()
-    
+
     # Create service in database
     db_service = ServiceDB(
         id=service_id,
@@ -662,10 +689,10 @@ async def create_service(service: ServiceCreate, agent: Agent = Depends(require_
         revenue_usdc=0.0,
     )
     await create_service(db_service)
-    
+
     # Update tracking
     record_listing(agent.api_key)
-    
+
     # Return response with secret token (shown only once!)
     return ServiceCreateResponse(
         id=service_id,
@@ -689,7 +716,7 @@ if request.headers.get("X-MoltMart-Token") != "{secret_token}":
 ```
 
 MoltMart will include this token when forwarding buyer requests to your endpoint.
-"""
+""",
     )
 
 
@@ -697,20 +724,20 @@ MoltMart will include this token when forwarding buyer requests to your endpoint
 @limiter.limit(RATE_LIMIT_READ)
 async def list_services(
     request: Request,
-    category: Optional[str] = None,
+    category: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ):
     """List all services, optionally filtered by category (rate limited: 120/min)"""
     db_services = await get_services(category=category, limit=limit, offset=offset)
     all_db_services = await get_all_services()
-    
+
     # Filter by category for total count if needed
     if category:
         total = len([s for s in all_db_services if s.category.lower() == category.lower()])
     else:
         total = len(all_db_services)
-    
+
     return ServiceList(
         services=[db_service_to_response(s) for s in db_services],
         total=total,
@@ -736,13 +763,15 @@ async def search_services(request: Request, query: str, limit: int = 10):
     query_lower = query.lower()
     all_db_services = await get_all_services()
     results = [
-        db_service_to_response(s) for s in all_db_services
+        db_service_to_response(s)
+        for s in all_db_services
         if query_lower in s.name.lower() or query_lower in (s.description or "").lower()
     ]
     return {"results": results[:limit], "query": query}
 
 
 # ============ CATEGORIES ============
+
 
 @app.get("/categories")
 @limiter.limit(RATE_LIMIT_READ)
@@ -755,21 +784,24 @@ async def list_categories(request: Request):
 
 # ============ FEEDBACK ============
 
+
 class ReputationFeedback(BaseModel):
     service_id: str
     rating: int
-    comment: Optional[str] = None
-    tx_hash: Optional[str] = None  # Optional proof of transaction
+    comment: str | None = None
+    tx_hash: str | None = None  # Optional proof of transaction
+
 
 feedback_db: list = []
+
 
 @app.post("/feedback")
 async def submit_feedback(feedback: ReputationFeedback, agent: Agent = Depends(require_agent)):
     """
     Submit feedback for a service.
-    
+
     🔐 Requires authentication (X-API-Key header)
-    
+
     Constraints:
     - Cannot review your own services
     - One review per service per agent
@@ -777,37 +809,38 @@ async def submit_feedback(feedback: ReputationFeedback, agent: Agent = Depends(r
     db_service = await get_service(feedback.service_id)
     if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
-    
+
     # Prevent self-reviews
     if db_service.provider_wallet and db_service.provider_wallet.lower() == agent.wallet_address.lower():
         raise HTTPException(status_code=403, detail="Cannot review your own service")
-    
+
     if not 1 <= feedback.rating <= 5:
         raise HTTPException(status_code=400, detail="Rating must be 1-5")
-    
+
     # Prevent duplicate reviews (one per service per agent)
     existing_review = next(
-        (f for f in feedback_db 
-         if f["service_id"] == feedback.service_id 
-         and f["caller_wallet"].lower() == agent.wallet_address.lower()),
-        None
+        (
+            f
+            for f in feedback_db
+            if f["service_id"] == feedback.service_id and f["caller_wallet"].lower() == agent.wallet_address.lower()
+        ),
+        None,
     )
     if existing_review:
-        raise HTTPException(
-            status_code=409, 
-            detail="You have already reviewed this service. Update not supported yet."
-        )
-    
-    feedback_db.append({
-        "service_id": feedback.service_id,
-        "rating": feedback.rating,
-        "comment": feedback.comment,
-        "caller_wallet": agent.wallet_address,  # Use authenticated wallet, not self-reported
-        "caller_name": agent.name,
-        "tx_hash": feedback.tx_hash,
-        "timestamp": datetime.utcnow().isoformat(),
-    })
-    
+        raise HTTPException(status_code=409, detail="You have already reviewed this service. Update not supported yet.")
+
+    feedback_db.append(
+        {
+            "service_id": feedback.service_id,
+            "rating": feedback.rating,
+            "comment": feedback.comment,
+            "caller_wallet": agent.wallet_address,  # Use authenticated wallet, not self-reported
+            "caller_name": agent.name,
+            "tx_hash": feedback.tx_hash,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    )
+
     return {"status": "submitted", "message": "Feedback recorded", "agent": agent.name}
 
 
@@ -818,14 +851,14 @@ async def get_service_reputation(request: Request, service_id: str):
     db_service = await get_service(service_id)
     if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
-    
+
     service_feedback = [f for f in feedback_db if f["service_id"] == service_id]
-    
+
     if not service_feedback:
         return {"service_id": service_id, "rating": None, "feedback_count": 0}
-    
+
     avg_rating = sum(f["rating"] for f in service_feedback) / len(service_feedback)
-    
+
     return {
         "service_id": service_id,
         "rating": round(avg_rating, 2),
@@ -836,13 +869,14 @@ async def get_service_reputation(request: Request, service_id: str):
 
 # ============ STATS ============
 
+
 @app.get("/stats")
 @limiter.limit(RATE_LIMIT_READ)
 async def get_stats(request: Request):
     """Marketplace statistics (rate limited: 120/min)"""
     all_db_services = await get_all_services()
     total_agents = await count_agents()
-    
+
     return {
         "total_services": len(all_db_services),
         "total_agents": total_agents,
@@ -862,21 +896,17 @@ transactions_log: list = []
 def generate_hmac_signature(body: str, timestamp: int, service_id: str, secret_token: str) -> str:
     """Generate HMAC-SHA256 signature for request verification"""
     message = f"{body}|{timestamp}|{service_id}"
-    return hmac.new(
-        secret_token.encode(),
-        message.encode(),
-        hashlib.sha256
-    ).hexdigest()
+    return hmac.new(secret_token.encode(), message.encode(), hashlib.sha256).hexdigest()
 
 
 @app.post("/services/{service_id}/call")
 async def call_service(service_id: str, request: Request, agent: Agent = Depends(require_agent)):
     """
     Call a service through MoltMart's proxy.
-    
+
     🔐 Requires authentication (X-API-Key header)
     💰 Requires x402 payment to seller's wallet
-    
+
     Flow:
     1. Buyer calls this endpoint
     2. If no payment: returns 402 with payment instructions (payTo = seller wallet)
@@ -884,7 +914,7 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
     4. MoltMart verifies payment via facilitator
     5. MoltMart forwards to seller's endpoint with HMAC signature
     6. Response returned to buyer
-    
+
     Headers sent to seller:
     - X-MoltMart-Token: Secret token for basic auth
     - X-MoltMart-Signature: HMAC-SHA256(body|timestamp|service_id, secret_token)
@@ -896,30 +926,19 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
     service = await get_service(service_id)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
-    
+
     # Check if service has an endpoint
     if not service.endpoint_url:
-        raise HTTPException(
-            status_code=400, 
-            detail="This service does not have a callable endpoint"
-        )
-    
+        raise HTTPException(status_code=400, detail="This service does not have a callable endpoint")
+
     # ============ x402 PAYMENT VERIFICATION ============
-    
-    # Build payment requirements - payment goes DIRECT to seller
-    payment_config = PaymentOption(
-        scheme="exact",
-        pay_to=service.provider_wallet,  # Direct to seller!
-        price=f"${service.price_usdc}",
-        network="eip155:8453",  # Base mainnet
-    )
-    
+
     # Get the full URL for the resource
     resource_url = str(request.url)
-    
+
     # Check for X-Payment header
     payment_header = request.headers.get("X-Payment")
-    
+
     if not payment_header:
         # No payment - return 402 with requirements
         # Build the 402 response manually
@@ -948,15 +967,15 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
             },
             headers={
                 "X-Payment-Required": "true",
-            }
+            },
         )
-    
+
     # Payment header exists - verify it via facilitator
     try:
         # Decode the payment payload from base64
-        payment_payload_json = base64.b64decode(payment_header).decode('utf-8')
+        payment_payload_json = base64.b64decode(payment_header).decode("utf-8")
         payment_payload = json.loads(payment_payload_json)
-        
+
         # Build requirements for verification
         payment_requirements = {
             "scheme": "exact",
@@ -967,7 +986,7 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
             "maxTimeoutSeconds": 300,
             "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
         }
-        
+
         # Verify and settle via facilitator
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Step 1: Verify payment
@@ -978,16 +997,16 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                     "paymentRequirements": payment_requirements,
                 },
             )
-            
+
             if verify_response.status_code != 200:
                 return JSONResponse(
                     status_code=402,
                     content={
                         "error": "Payment verification failed",
                         "detail": verify_response.text,
-                    }
+                    },
                 )
-            
+
             verify_result = verify_response.json()
             if not verify_result.get("isValid", False):
                 return JSONResponse(
@@ -995,9 +1014,9 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                     content={
                         "error": "Payment invalid",
                         "reason": verify_result.get("invalidReason", "Unknown"),
-                    }
+                    },
                 )
-            
+
             # Step 2: Settle payment (submit to blockchain)
             settle_response = await client.post(
                 f"{FACILITATOR_URL}/settle",
@@ -1006,7 +1025,7 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                     "paymentRequirements": payment_requirements,
                 },
             )
-            
+
             if settle_response.status_code == 200:
                 settle_result = settle_response.json()
                 if not settle_result.get("success"):
@@ -1015,7 +1034,7 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                         content={
                             "error": "Payment settlement failed",
                             "reason": settle_result.get("errorReason", "Unknown"),
-                        }
+                        },
                     )
                 # Payment settled on-chain! Continue with request
             else:
@@ -1024,40 +1043,40 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                     content={
                         "error": "Payment settlement error",
                         "detail": settle_response.text,
-                    }
+                    },
                 )
-                
+
     except Exception as e:
         return JSONResponse(
             status_code=402,
             content={
                 "error": "Payment processing error",
                 "detail": str(e),
-            }
+            },
         )
-    
+
     # ============ PAYMENT VERIFIED - PROCEED WITH REQUEST ============
-    
+
     # Get request body
     try:
         body = await request.body()
-        body_str = body.decode('utf-8') if body else ""
+        body_str = body.decode("utf-8") if body else ""
     except Exception:
         body_str = ""
-    
+
     # Generate transaction ID
     tx_id = f"mm_tx_{secrets.token_urlsafe(16)}"
     timestamp = int(time.time())
-    
+
     # Generate HMAC signature
     # The seller can verify this to ensure the request came from MoltMart
     signature = generate_hmac_signature(
-        body_str, 
-        timestamp, 
-        service_id, 
-        service.secret_token_hash  # Using the stored hash as the shared secret
+        body_str,
+        timestamp,
+        service_id,
+        service.secret_token_hash,  # Using the stored hash as the shared secret
     )
-    
+
     # Prepare headers for seller
     headers = {
         "Content-Type": "application/json",
@@ -1069,7 +1088,7 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
         "X-MoltMart-Tx": tx_id,
         "X-MoltMart-Service": service_id,
     }
-    
+
     # Log transaction
     tx_log = {
         "tx_id": tx_id,
@@ -1083,7 +1102,7 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
         "status": "pending",
     }
     transactions_log.append(tx_log)
-    
+
     # Forward request to seller's endpoint
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1092,17 +1111,17 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                 content=body,
                 headers=headers,
             )
-        
+
         # Update transaction log
         tx_log["status"] = "completed" if response.status_code == 200 else "failed"
         tx_log["seller_response_code"] = response.status_code
-        
+
         # Update service stats in database
         if response.status_code == 200:
             await update_service_stats(service_id, calls_delta=1, revenue_delta=service.price_usdc)
         else:
             await update_service_stats(service_id, calls_delta=1, revenue_delta=0)
-        
+
         # Return seller's response to buyer
         return Response(
             content=response.content,
@@ -1114,8 +1133,8 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
             },
             media_type=response.headers.get("content-type", "application/json"),
         )
-        
-    except httpx.TimeoutException:
+
+    except httpx.TimeoutException as e:
         tx_log["status"] = "timeout"
         raise HTTPException(
             status_code=504,
@@ -1123,8 +1142,8 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                 "error": "Seller endpoint timed out",
                 "tx_id": tx_id,
                 "service_id": service_id,
-            }
-        )
+            },
+        ) from e
     except httpx.RequestError as e:
         tx_log["status"] = "error"
         tx_log["error"] = str(e)
@@ -1135,15 +1154,16 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                 "tx_id": tx_id,
                 "service_id": service_id,
                 "message": str(e),
-            }
-        )
+            },
+        ) from e
 
 
 @app.get("/transactions/mine")
 async def get_my_transactions(agent: Agent = Depends(require_agent), limit: int = 20):
     """Get your recent transactions (as buyer or seller)"""
     my_txs = [
-        tx for tx in transactions_log
+        tx
+        for tx in transactions_log
         if tx["buyer_wallet"].lower() == agent.wallet_address.lower()
         or tx["seller_wallet"].lower() == agent.wallet_address.lower()
     ]
@@ -1155,4 +1175,5 @@ async def get_my_transactions(agent: Agent = Depends(require_agent), limit: int 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

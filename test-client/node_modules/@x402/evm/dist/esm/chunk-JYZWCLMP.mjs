@@ -1,0 +1,305 @@
+import {
+  authorizationTypes,
+  eip3009ABI,
+  getEvmChainId
+} from "./chunk-ZYXTTU74.mjs";
+
+// src/exact/v1/facilitator/scheme.ts
+import { getAddress, isAddressEqual, parseErc6492Signature, parseSignature } from "viem";
+var ExactEvmSchemeV1 = class {
+  /**
+   * Creates a new ExactEvmFacilitatorV1 instance.
+   *
+   * @param signer - The EVM signer for facilitator operations
+   * @param config - Optional configuration for the facilitator
+   */
+  constructor(signer, config) {
+    this.signer = signer;
+    this.scheme = "exact";
+    this.caipFamily = "eip155:*";
+    this.config = {
+      deployERC4337WithEIP6492: config?.deployERC4337WithEIP6492 ?? false
+    };
+  }
+  /**
+   * Get mechanism-specific extra data for the supported kinds endpoint.
+   * For EVM, no extra data is needed.
+   *
+   * @param _ - The network identifier (unused for EVM)
+   * @returns undefined (EVM has no extra data)
+   */
+  getExtra(_) {
+    return void 0;
+  }
+  /**
+   * Get signer addresses used by this facilitator.
+   * Returns all addresses this facilitator can use for signing/settling transactions.
+   *
+   * @param _ - The network identifier (unused for EVM, addresses are network-agnostic)
+   * @returns Array of facilitator wallet addresses
+   */
+  getSigners(_) {
+    return [...this.signer.getAddresses()];
+  }
+  /**
+   * Verifies a payment payload (V1).
+   *
+   * @param payload - The payment payload to verify
+   * @param requirements - The payment requirements
+   * @returns Promise resolving to verification response
+   */
+  async verify(payload, requirements) {
+    const requirementsV1 = requirements;
+    const payloadV1 = payload;
+    const exactEvmPayload = payload.payload;
+    if (payloadV1.scheme !== "exact" || requirements.scheme !== "exact") {
+      return {
+        isValid: false,
+        invalidReason: "unsupported_scheme",
+        payer: exactEvmPayload.authorization.from
+      };
+    }
+    const chainId = getEvmChainId(payloadV1.network);
+    if (!requirements.extra?.name || !requirements.extra?.version) {
+      return {
+        isValid: false,
+        invalidReason: "missing_eip712_domain",
+        payer: exactEvmPayload.authorization.from
+      };
+    }
+    const { name, version } = requirements.extra;
+    const erc20Address = getAddress(requirements.asset);
+    if (payloadV1.network !== requirements.network) {
+      return {
+        isValid: false,
+        invalidReason: "network_mismatch",
+        payer: exactEvmPayload.authorization.from
+      };
+    }
+    const permitTypedData = {
+      types: authorizationTypes,
+      primaryType: "TransferWithAuthorization",
+      domain: {
+        name,
+        version,
+        chainId,
+        verifyingContract: erc20Address
+      },
+      message: {
+        from: exactEvmPayload.authorization.from,
+        to: exactEvmPayload.authorization.to,
+        value: BigInt(exactEvmPayload.authorization.value),
+        validAfter: BigInt(exactEvmPayload.authorization.validAfter),
+        validBefore: BigInt(exactEvmPayload.authorization.validBefore),
+        nonce: exactEvmPayload.authorization.nonce
+      }
+    };
+    try {
+      const recoveredAddress = await this.signer.verifyTypedData({
+        address: exactEvmPayload.authorization.from,
+        ...permitTypedData,
+        signature: exactEvmPayload.signature
+      });
+      if (!recoveredAddress) {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_evm_payload_signature",
+          payer: exactEvmPayload.authorization.from
+        };
+      }
+    } catch {
+      const signature = exactEvmPayload.signature;
+      const signatureLength = signature.startsWith("0x") ? signature.length - 2 : signature.length;
+      const isSmartWallet = signatureLength > 130;
+      if (isSmartWallet) {
+        const payerAddress = exactEvmPayload.authorization.from;
+        const bytecode = await this.signer.getCode({ address: payerAddress });
+        if (!bytecode || bytecode === "0x") {
+          const erc6492Data = parseErc6492Signature(signature);
+          const hasDeploymentInfo = erc6492Data.address && erc6492Data.data && !isAddressEqual(erc6492Data.address, "0x0000000000000000000000000000000000000000");
+          if (!hasDeploymentInfo) {
+            return {
+              isValid: false,
+              invalidReason: "invalid_exact_evm_payload_undeployed_smart_wallet",
+              payer: payerAddress
+            };
+          }
+        } else {
+          return {
+            isValid: false,
+            invalidReason: "invalid_exact_evm_payload_signature",
+            payer: exactEvmPayload.authorization.from
+          };
+        }
+      } else {
+        return {
+          isValid: false,
+          invalidReason: "invalid_exact_evm_payload_signature",
+          payer: exactEvmPayload.authorization.from
+        };
+      }
+    }
+    if (getAddress(exactEvmPayload.authorization.to) !== getAddress(requirements.payTo)) {
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_evm_payload_recipient_mismatch",
+        payer: exactEvmPayload.authorization.from
+      };
+    }
+    const now = Math.floor(Date.now() / 1e3);
+    if (BigInt(exactEvmPayload.authorization.validBefore) < BigInt(now + 6)) {
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_evm_payload_authorization_valid_before",
+        payer: exactEvmPayload.authorization.from
+      };
+    }
+    if (BigInt(exactEvmPayload.authorization.validAfter) > BigInt(now)) {
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_evm_payload_authorization_valid_after",
+        payer: exactEvmPayload.authorization.from
+      };
+    }
+    try {
+      const balance = await this.signer.readContract({
+        address: erc20Address,
+        abi: eip3009ABI,
+        functionName: "balanceOf",
+        args: [exactEvmPayload.authorization.from]
+      });
+      if (BigInt(balance) < BigInt(requirementsV1.maxAmountRequired)) {
+        return {
+          isValid: false,
+          invalidReason: "insufficient_funds",
+          payer: exactEvmPayload.authorization.from
+        };
+      }
+    } catch {
+    }
+    if (BigInt(exactEvmPayload.authorization.value) < BigInt(requirementsV1.maxAmountRequired)) {
+      return {
+        isValid: false,
+        invalidReason: "invalid_exact_evm_payload_authorization_value",
+        payer: exactEvmPayload.authorization.from
+      };
+    }
+    return {
+      isValid: true,
+      invalidReason: void 0,
+      payer: exactEvmPayload.authorization.from
+    };
+  }
+  /**
+   * Settles a payment by executing the transfer (V1).
+   *
+   * @param payload - The payment payload to settle
+   * @param requirements - The payment requirements
+   * @returns Promise resolving to settlement response
+   */
+  async settle(payload, requirements) {
+    const payloadV1 = payload;
+    const exactEvmPayload = payload.payload;
+    const valid = await this.verify(payload, requirements);
+    if (!valid.isValid) {
+      return {
+        success: false,
+        network: payloadV1.network,
+        transaction: "",
+        errorReason: valid.invalidReason ?? "invalid_scheme",
+        payer: exactEvmPayload.authorization.from
+      };
+    }
+    try {
+      const parseResult = parseErc6492Signature(exactEvmPayload.signature);
+      const { signature, address: factoryAddress, data: factoryCalldata } = parseResult;
+      if (this.config.deployERC4337WithEIP6492 && factoryAddress && factoryCalldata && !isAddressEqual(factoryAddress, "0x0000000000000000000000000000000000000000")) {
+        const payerAddress = exactEvmPayload.authorization.from;
+        const bytecode = await this.signer.getCode({ address: payerAddress });
+        if (!bytecode || bytecode === "0x") {
+          try {
+            console.log(`Deploying ERC-4337 smart wallet for ${payerAddress} via EIP-6492`);
+            const deployTx = await this.signer.sendTransaction({
+              to: factoryAddress,
+              data: factoryCalldata
+            });
+            await this.signer.waitForTransactionReceipt({ hash: deployTx });
+            console.log(`Successfully deployed smart wallet for ${payerAddress}`);
+          } catch (deployError) {
+            console.error("Smart wallet deployment failed:", deployError);
+            throw deployError;
+          }
+        } else {
+          console.log(`Smart wallet for ${payerAddress} already deployed, skipping deployment`);
+        }
+      }
+      const signatureLength = signature.startsWith("0x") ? signature.length - 2 : signature.length;
+      const isECDSA = signatureLength === 130;
+      let tx;
+      if (isECDSA) {
+        const parsedSig = parseSignature(signature);
+        tx = await this.signer.writeContract({
+          address: getAddress(requirements.asset),
+          abi: eip3009ABI,
+          functionName: "transferWithAuthorization",
+          args: [
+            getAddress(exactEvmPayload.authorization.from),
+            getAddress(exactEvmPayload.authorization.to),
+            BigInt(exactEvmPayload.authorization.value),
+            BigInt(exactEvmPayload.authorization.validAfter),
+            BigInt(exactEvmPayload.authorization.validBefore),
+            exactEvmPayload.authorization.nonce,
+            parsedSig.v || parsedSig.yParity,
+            parsedSig.r,
+            parsedSig.s
+          ]
+        });
+      } else {
+        tx = await this.signer.writeContract({
+          address: getAddress(requirements.asset),
+          abi: eip3009ABI,
+          functionName: "transferWithAuthorization",
+          args: [
+            getAddress(exactEvmPayload.authorization.from),
+            getAddress(exactEvmPayload.authorization.to),
+            BigInt(exactEvmPayload.authorization.value),
+            BigInt(exactEvmPayload.authorization.validAfter),
+            BigInt(exactEvmPayload.authorization.validBefore),
+            exactEvmPayload.authorization.nonce,
+            signature
+          ]
+        });
+      }
+      const receipt = await this.signer.waitForTransactionReceipt({ hash: tx });
+      if (receipt.status !== "success") {
+        return {
+          success: false,
+          errorReason: "invalid_transaction_state",
+          transaction: tx,
+          network: payloadV1.network,
+          payer: exactEvmPayload.authorization.from
+        };
+      }
+      return {
+        success: true,
+        transaction: tx,
+        network: payloadV1.network,
+        payer: exactEvmPayload.authorization.from
+      };
+    } catch (error) {
+      console.error("Failed to settle transaction:", error);
+      return {
+        success: false,
+        errorReason: "transaction_failed",
+        transaction: "",
+        network: payloadV1.network,
+        payer: exactEvmPayload.authorization.from
+      };
+    }
+  }
+};
+
+export {
+  ExactEvmSchemeV1
+};
+//# sourceMappingURL=chunk-JYZWCLMP.mjs.map
