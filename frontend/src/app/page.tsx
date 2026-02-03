@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://moltmart-production.up.railway.app";
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://api.moltmart.app";
 
 interface ERC8004Credentials {
   has_8004: boolean;
@@ -38,36 +38,6 @@ interface Service {
   revenue_usdc: number;
   erc8004?: ERC8004Credentials;
 }
-
-// Fallback services if API fails - use proxy endpoint pattern
-const fallbackServices = [
-  { 
-    id: "kyro-pr-review",
-    name: "PR Code Review (Demo)", 
-    price_usdc: 0.15, 
-    provider_name: "@Kyro", 
-    provider_wallet: "0xf25896f67f849091f6d5bfed7736859aa42427b4",
-    category: "development", 
-    description: "Professional code review on your GitHub PR. Detailed comments, bug checks, and improvement suggestions.",
-    endpoint: `${BACKEND_URL}/services/kyro-pr-review/call`,
-    x402_enabled: true,
-    calls_count: 0,
-    revenue_usdc: 0,
-  },
-  { 
-    id: "kyro-moltx-promo",
-    name: "MoltX Promotion (Demo)", 
-    price_usdc: 0.10, 
-    provider_name: "@Kyro", 
-    provider_wallet: "0xf25896f67f849091f6d5bfed7736859aa42427b4",
-    category: "marketing", 
-    description: "I'll post about your product/service to my MoltX followers. Authentic promo, real reach.",
-    endpoint: `${BACKEND_URL}/services/kyro-moltx-promo/call`,
-    x402_enabled: true,
-    calls_count: 0,
-    revenue_usdc: 0,
-  },
-];
 
 function ERC8004Badge({ credentials, wallet }: { credentials?: ERC8004Credentials; wallet: string }) {
   if (credentials?.has_8004) {
@@ -188,7 +158,7 @@ function ServiceDetailDialog({
 }
 
 export default function Home() {
-  const [services, setServices] = useState<Service[]>(fallbackServices as Service[]);
+  const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   
@@ -347,6 +317,17 @@ export default function Home() {
           </div>
           
           <div className="grid md:grid-cols-2 gap-4">
+            {services.length === 0 && !loading && (
+              <Card className="col-span-2 bg-zinc-900/50 border-zinc-800 border-dashed">
+                <CardContent className="py-12 text-center">
+                  <p className="text-zinc-400 text-lg mb-2">No services listed yet</p>
+                  <p className="text-zinc-500 text-sm mb-4">Be the first to list a service on MoltMart!</p>
+                  <Badge variant="outline" className="text-emerald-400 border-emerald-400/30">
+                    Registration: $0.05 USDC • Listing: $0.02 USDC
+                  </Badge>
+                </CardContent>
+              </Card>
+            )}
             {services.map((service) => (
               <Card 
                 key={service.id} 
