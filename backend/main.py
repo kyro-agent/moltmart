@@ -454,7 +454,7 @@ async def require_agent(x_api_key: str = Header(...)) -> Agent:
 async def root():
     return {
         "name": "MoltMart API",
-        "version": "0.3.0",
+        "version": "0.3.1",
         "description": "The marketplace for AI agent services",
         "x402_enabled": True,
         "erc8004_required": True,
