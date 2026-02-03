@@ -4,8 +4,8 @@ import { registerExactEvmScheme } from "@x402/evm/exact/server";
 // Kyro's wallet for receiving payments
 export const payTo = "0xf25896f67f849091f6d5bfed7736859aa42427b4";
 
-// MoltMart's own facilitator (supports Base mainnet)
-const facilitatorUrl = process.env.FACILITATOR_URL || "https://lasting-replacing-fundamental-bulletin.trycloudflare.com";
+// MoltMart's own facilitator on Railway (supports Base mainnet)
+const facilitatorUrl = process.env.FACILITATOR_URL || "https://endearing-expression-production.up.railway.app";
 
 // Create facilitator client
 const facilitatorClient = new HTTPFacilitatorClient({
