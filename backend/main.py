@@ -29,6 +29,15 @@ from slowapi.errors import RateLimitExceeded
 # ERC-8004 integration
 from erc8004 import get_8004_credentials_simple
 
+# Database
+from database import (
+    init_db, 
+    AgentDB, ServiceDB, TransactionDB,
+    get_agent_by_api_key, get_agent_by_wallet, create_agent,
+    get_service, get_services, create_service, update_service_stats,
+    count_agents, count_services, get_all_services, log_transaction
+)
+
 # x402 payment protocol
 from x402.server import x402ResourceServer
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
@@ -146,10 +155,20 @@ x402_routes: Dict[str, RouteConfig] = {
 # Add x402 payment middleware
 app.add_middleware(PaymentMiddlewareASGI, routes=x402_routes, server=x402_server)
 
-# ============ IN-MEMORY STORAGE ============
 
-services_db: dict = {}
-agents_db: dict = {}  # api_key -> agent info
+# ============ DATABASE INITIALIZATION ============
+
+@app.on_event("startup")
+async def startup():
+    """Initialize database on startup"""
+    await init_db()
+    print("✅ Database initialized")
+
+
+# ============ IN-MEMORY STORAGE (kept for rate limiting, will migrate later) ============
+
+services_db: dict = {}  # Deprecated - using database now
+agents_db: dict = {}  # Deprecated - using database now  
 rate_limits: Dict[str, List[float]] = defaultdict(list)  # api_key -> list of timestamps
 
 
@@ -309,11 +328,51 @@ def service_to_response(service: Service) -> ServiceResponse:
 
 # ============ AUTH ============
 
+def db_service_to_response(db_service: ServiceDB) -> ServiceResponse:
+    """Convert database service to Pydantic response model"""
+    return ServiceResponse(
+        id=db_service.id,
+        name=db_service.name,
+        description=db_service.description,
+        price_usdc=db_service.price_usdc,
+        category=db_service.category,
+        provider_name=db_service.provider_name,
+        provider_wallet=db_service.provider_wallet,
+        created_at=db_service.created_at,
+        calls_count=db_service.calls_count or 0,
+        revenue_usdc=db_service.revenue_usdc or 0.0,
+    )
+
+
+def db_agent_to_pydantic(db_agent: AgentDB) -> Agent:
+    """Convert database agent to Pydantic model"""
+    return Agent(
+        id=db_agent.id,
+        api_key=db_agent.api_key,
+        name=db_agent.name,
+        wallet_address=db_agent.wallet_address,
+        description=db_agent.description,
+        moltx_handle=db_agent.moltx_handle,
+        github_handle=db_agent.github_handle,
+        created_at=db_agent.created_at,
+        services_count=db_agent.services_count,
+        erc8004=ERC8004Credentials(
+            has_8004=db_agent.has_8004 or False,
+            agent_id=db_agent.agent_8004_id,
+            agent_registry=db_agent.agent_8004_registry,
+            scan_url=db_agent.scan_url,
+        ) if db_agent.has_8004 else None,
+    )
+
+
 async def get_current_agent(x_api_key: str = Header(None)) -> Optional[Agent]:
     """Validate API key and return agent"""
     if not x_api_key:
         return None
-    return agents_db.get(x_api_key)
+    db_agent = await get_agent_by_api_key(x_api_key)
+    if not db_agent:
+        return None
+    return db_agent_to_pydantic(db_agent)
 
 
 async def require_agent(x_api_key: str = Header(...)) -> Agent:
@@ -323,10 +382,10 @@ async def require_agent(x_api_key: str = Header(...)) -> Agent:
             status_code=401, 
             detail="X-API-Key header required. Register first at POST /agents/register ($0.05 USDC via x402)"
         )
-    agent = agents_db.get(x_api_key)
-    if not agent:
+    db_agent = await get_agent_by_api_key(x_api_key)
+    if not db_agent:
         raise HTTPException(status_code=401, detail="Invalid API key. Register at POST /agents/register to get a valid key.")
-    return agent
+    return db_agent_to_pydantic(db_agent)
 
 
 # ============ ENDPOINTS ============
@@ -368,48 +427,54 @@ async def register_agent(agent_data: AgentRegister):
     Returns your API key - save it! You'll need it to list services.
     """
     # Check if wallet already registered
-    for existing_agent in agents_db.values():
-        if existing_agent.wallet_address.lower() == agent_data.wallet_address.lower():
-            raise HTTPException(
-                status_code=400, 
-                detail="Wallet already registered. Use your existing API key."
-            )
+    existing = await get_agent_by_wallet(agent_data.wallet_address)
+    if existing:
+        raise HTTPException(
+            status_code=400, 
+            detail="Wallet already registered. Use your existing API key."
+        )
     
     # Generate unique ID and API key
     agent_id = str(uuid.uuid4())
     api_key = f"mm_{secrets.token_urlsafe(32)}"
     
     # Check for ERC-8004 credentials on Ethereum mainnet
-    erc8004_creds = None
+    has_8004 = False
+    agent_8004_id = None
+    agent_8004_registry = None
+    scan_url = None
     try:
         creds = await get_8004_credentials_simple(agent_data.wallet_address)
         if creds:
-            erc8004_creds = ERC8004Credentials(
-                has_8004=creds.get("has_8004", False),
-                agent_id=creds.get("agent_id"),
-                agent_count=creds.get("agent_count"),
-                agent_registry=creds.get("agent_registry"),
-                name=creds.get("name"),
-                description=creds.get("description"),
-                image=creds.get("image"),
-                scan_url=creds.get("8004scan_url"),
-            )
+            has_8004 = creds.get("has_8004", False)
+            agent_8004_id = creds.get("agent_id")
+            agent_8004_registry = creds.get("agent_registry")
+            scan_url = creds.get("8004scan_url")
     except Exception as e:
         print(f"Warning: Could not fetch ERC-8004 credentials: {e}")
     
-    # Create agent
-    agent = Agent(
+    # Create database agent
+    db_agent = AgentDB(
         id=agent_id,
         api_key=api_key,
+        name=agent_data.name,
+        wallet_address=agent_data.wallet_address.lower(),
+        description=agent_data.description,
+        moltx_handle=agent_data.moltx_handle,
+        github_handle=agent_data.github_handle,
         created_at=datetime.utcnow(),
-        erc8004=erc8004_creds,
-        **agent_data.model_dump()
+        services_count=0,
+        has_8004=has_8004,
+        agent_8004_id=agent_8004_id,
+        agent_8004_registry=agent_8004_registry,
+        scan_url=scan_url,
     )
     
-    # Store by API key
-    agents_db[api_key] = agent
+    # Save to database
+    await create_agent(db_agent)
     
-    return agent
+    # Return pydantic model
+    return db_agent_to_pydantic(db_agent)
 
 
 @app.get("/agents/me")
@@ -482,8 +547,8 @@ async def create_service(service: ServiceCreate, agent: Agent = Depends(require_
     secret_token = f"mm_tok_{secrets.token_urlsafe(32)}"
     secret_token_hash = hashlib.sha256(secret_token.encode()).hexdigest()
     
-    # Create service with hashed token
-    new_service = Service(
+    # Create service in database
+    db_service = ServiceDB(
         id=service_id,
         name=service.name,
         description=service.description,
@@ -494,11 +559,12 @@ async def create_service(service: ServiceCreate, agent: Agent = Depends(require_
         provider_wallet=agent.wallet_address,
         secret_token_hash=secret_token_hash,
         created_at=datetime.utcnow(),
+        calls_count=0,
+        revenue_usdc=0.0,
     )
-    services_db[service_id] = new_service
+    await create_service(db_service)
     
     # Update tracking
-    agent.services_count += 1
     record_listing(agent.api_key)
     
     # Return response with secret token (shown only once!)
@@ -511,7 +577,7 @@ async def create_service(service: ServiceCreate, agent: Agent = Depends(require_
         category=service.category,
         provider_name=agent.name,
         provider_wallet=agent.wallet_address,
-        created_at=new_service.created_at,
+        created_at=db_service.created_at,
         secret_token=secret_token,
         setup_instructions=f"""
 ⚠️ SAVE THIS TOKEN! It will not be shown again.
@@ -537,16 +603,17 @@ async def list_services(
     offset: int = 0,
 ):
     """List all services, optionally filtered by category (rate limited: 120/min)"""
-    all_services = list(services_db.values())
+    db_services = await get_services(category=category, limit=limit, offset=offset)
+    all_db_services = await get_all_services()
     
+    # Filter by category for total count if needed
     if category:
-        all_services = [s for s in all_services if s.category.lower() == category.lower()]
-    
-    total = len(all_services)
-    paginated = all_services[offset:offset + limit]
+        total = len([s for s in all_db_services if s.category.lower() == category.lower()])
+    else:
+        total = len(all_db_services)
     
     return ServiceList(
-        services=[service_to_response(s) for s in paginated],
+        services=[db_service_to_response(s) for s in db_services],
         total=total,
         limit=limit,
         offset=offset,
@@ -555,11 +622,12 @@ async def list_services(
 
 @app.get("/services/{service_id}", response_model=ServiceResponse)
 @limiter.limit(RATE_LIMIT_READ)
-async def get_service(request: Request, service_id: str):
+async def get_service_by_id(request: Request, service_id: str):
     """Get a specific service by ID (rate limited: 120/min)"""
-    if service_id not in services_db:
+    db_service = await get_service(service_id)
+    if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
-    return service_to_response(services_db[service_id])
+    return db_service_to_response(db_service)
 
 
 @app.get("/services/search/{query}")
@@ -567,9 +635,10 @@ async def get_service(request: Request, service_id: str):
 async def search_services(request: Request, query: str, limit: int = 10):
     """Search services by name or description (rate limited: 30/min)"""
     query_lower = query.lower()
+    all_db_services = await get_all_services()
     results = [
-        service_to_response(s) for s in services_db.values()
-        if query_lower in s.name.lower() or query_lower in s.description.lower()
+        db_service_to_response(s) for s in all_db_services
+        if query_lower in s.name.lower() or query_lower in (s.description or "").lower()
     ]
     return {"results": results[:limit], "query": query}
 
@@ -580,7 +649,8 @@ async def search_services(request: Request, query: str, limit: int = 10):
 @limiter.limit(RATE_LIMIT_READ)
 async def list_categories(request: Request):
     """List all available categories (rate limited: 120/min)"""
-    categories = set(s.category for s in services_db.values())
+    all_db_services = await get_all_services()
+    categories = set(s.category for s in all_db_services)
     return {"categories": list(categories)}
 
 
@@ -605,13 +675,12 @@ async def submit_feedback(feedback: ReputationFeedback, agent: Agent = Depends(r
     - Cannot review your own services
     - One review per service per agent
     """
-    if feedback.service_id not in services_db:
+    db_service = await get_service(feedback.service_id)
+    if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
     
-    service = services_db[feedback.service_id]
-    
     # Prevent self-reviews
-    if service.provider_wallet and service.provider_wallet.lower() == agent.wallet_address.lower():
+    if db_service.provider_wallet and db_service.provider_wallet.lower() == agent.wallet_address.lower():
         raise HTTPException(status_code=403, detail="Cannot review your own service")
     
     if not 1 <= feedback.rating <= 5:
@@ -647,7 +716,8 @@ async def submit_feedback(feedback: ReputationFeedback, agent: Agent = Depends(r
 @limiter.limit(RATE_LIMIT_READ)
 async def get_service_reputation(request: Request, service_id: str):
     """Get reputation/feedback for a service (rate limited: 120/min)"""
-    if service_id not in services_db:
+    db_service = await get_service(service_id)
+    if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
     
     service_feedback = [f for f in feedback_db if f["service_id"] == service_id]
@@ -671,15 +741,16 @@ async def get_service_reputation(request: Request, service_id: str):
 @limiter.limit(RATE_LIMIT_READ)
 async def get_stats(request: Request):
     """Marketplace statistics (rate limited: 120/min)"""
-    all_services = list(services_db.values())
+    all_db_services = await get_all_services()
+    total_agents = await count_agents()
     
     return {
-        "total_services": len(all_services),
-        "total_agents": len(agents_db),
-        "total_providers": len(set(s.provider_name for s in all_services)),
-        "categories": len(set(s.category for s in all_services)),
-        "total_calls": sum(s.calls_count for s in all_services),
-        "total_revenue_usdc": sum(s.revenue_usdc for s in all_services),
+        "total_services": len(all_db_services),
+        "total_agents": total_agents,
+        "total_providers": len(set(s.provider_name for s in all_db_services)),
+        "categories": len(set(s.category for s in all_db_services)),
+        "total_calls": sum(s.calls_count or 0 for s in all_db_services),
+        "total_revenue_usdc": sum(s.revenue_usdc or 0 for s in all_db_services),
     }
 
 
@@ -722,11 +793,10 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
     - X-MoltMart-Buyer: Buyer's wallet address
     - X-MoltMart-Tx: Transaction ID for audit
     """
-    # Get service
-    if service_id not in services_db:
+    # Get service from database
+    service = await get_service(service_id)
+    if not service:
         raise HTTPException(status_code=404, detail="Service not found")
-    
-    service = services_db[service_id]
     
     # Check if service has an endpoint
     if not service.endpoint_url:
@@ -928,10 +998,11 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
         tx_log["status"] = "completed" if response.status_code == 200 else "failed"
         tx_log["seller_response_code"] = response.status_code
         
-        # Update service stats
-        service.calls_count += 1
+        # Update service stats in database
         if response.status_code == 200:
-            service.revenue_usdc += service.price_usdc
+            await update_service_stats(service_id, calls_delta=1, revenue_delta=service.price_usdc)
+        else:
+            await update_service_stats(service_id, calls_delta=1, revenue_delta=0)
         
         # Return seller's response to buyer
         return Response(
