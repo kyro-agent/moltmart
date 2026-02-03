@@ -59,12 +59,13 @@ def get_operator_account():
     return Account.from_key(OPERATOR_PRIVATE_KEY)
 
 
-def register_agent(agent_uri: str) -> dict:
+def register_agent(agent_uri: str, recipient_wallet: str = None) -> dict:
     """
-    Register a new agent identity on ERC-8004
+    Register a new agent identity on ERC-8004 and transfer to recipient.
 
     Args:
         agent_uri: URI pointing to agent registration JSON (IPFS or HTTPS)
+        recipient_wallet: Wallet address to transfer the NFT to
 
     Returns:
         dict with agentId (tokenId) and transaction hash
@@ -77,7 +78,7 @@ def register_agent(agent_uri: str) -> dict:
         return {"error": "Operator wallet not configured"}
 
     try:
-        # Build transaction
+        # Build mint transaction
         nonce = w3.eth.get_transaction_count(account.address)
 
         tx = identity_registry.functions.register(agent_uri).build_transaction(
@@ -90,7 +91,7 @@ def register_agent(agent_uri: str) -> dict:
             }
         )
 
-        # Sign and send
+        # Sign and send mint tx
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
@@ -107,7 +108,40 @@ def register_agent(agent_uri: str) -> dict:
             except Exception:
                 continue
 
-        return {"success": True, "agent_id": agent_id, "tx_hash": tx_hash.hex(), "block": receipt.blockNumber}
+        # Transfer NFT to recipient if specified
+        transfer_tx_hash = None
+        if recipient_wallet and agent_id is not None:
+            try:
+                recipient = Web3.to_checksum_address(recipient_wallet)
+                nonce = w3.eth.get_transaction_count(account.address)
+                
+                transfer_tx = identity_registry.functions.transferFrom(
+                    account.address,
+                    recipient,
+                    agent_id
+                ).build_transaction({
+                    "from": account.address,
+                    "nonce": nonce,
+                    "gas": 100000,
+                    "gasPrice": w3.eth.gas_price,
+                    "chainId": BASE_CHAIN_ID,
+                })
+                
+                signed_transfer = account.sign_transaction(transfer_tx)
+                transfer_tx_hash = w3.eth.send_raw_transaction(signed_transfer.raw_transaction)
+                w3.eth.wait_for_transaction_receipt(transfer_tx_hash, timeout=60)
+                print(f"✅ Transferred ERC-8004 #{agent_id} to {recipient}")
+            except Exception as e:
+                print(f"⚠️ Transfer failed: {e}")
+
+        return {
+            "success": True,
+            "agent_id": agent_id,
+            "tx_hash": tx_hash.hex(),
+            "transfer_tx_hash": transfer_tx_hash.hex() if transfer_tx_hash else None,
+            "block": receipt.blockNumber,
+            "owner": recipient_wallet or account.address
+        }
 
     except Exception as e:
         return {"error": str(e)}

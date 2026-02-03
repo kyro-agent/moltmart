@@ -529,11 +529,13 @@ async def mint_identity(mint_request: IdentityMintRequest, request: Request):
     base_url = str(request.base_url).rstrip("/")
     agent_uri = f"{base_url}/identity/{wallet}/profile.json"
 
-    # Mint the identity (run in thread pool to avoid blocking)
+    # Mint the identity and transfer to user's wallet (run in thread pool to avoid blocking)
     import asyncio
+    from functools import partial
 
     try:
-        mint_result = await asyncio.get_event_loop().run_in_executor(None, mint_8004_identity, agent_uri)
+        mint_fn = partial(mint_8004_identity, agent_uri, wallet)
+        mint_result = await asyncio.get_event_loop().run_in_executor(None, mint_fn)
 
         if mint_result.get("success"):
             agent_8004_id = mint_result.get("agent_id")
@@ -730,7 +732,7 @@ async def check_8004_credentials(wallet_address: str):
     """
     Check ERC-8004 credentials for any wallet address.
 
-    This queries Ethereum mainnet to check if the wallet owns
+    This queries Base mainnet to check if the wallet owns
     an ERC-8004 Trustless Agent NFT.
 
     Free endpoint - no payment required.
@@ -755,7 +757,7 @@ async def check_8004_credentials(wallet_address: str):
         return {
             "wallet": wallet_address,
             "verified": False,
-            "message": "No ERC-8004 agent NFT found on Ethereum mainnet",
+            "message": "No ERC-8004 agent NFT found on Base mainnet",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error checking credentials: {str(e)}") from e
