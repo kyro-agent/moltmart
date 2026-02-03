@@ -15,6 +15,9 @@ import os
 import secrets
 import time
 
+# ERC-8004 integration
+from erc8004 import get_8004_credentials_simple
+
 # x402 payment protocol
 from x402.server import x402ResourceServer
 from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
@@ -156,12 +159,25 @@ class AgentRegister(BaseModel):
     github_handle: Optional[str] = None
 
 
+class ERC8004Credentials(BaseModel):
+    """ERC-8004 Trustless Agent credentials"""
+    has_8004: bool = False
+    agent_id: Optional[int] = None
+    agent_count: Optional[int] = None
+    agent_registry: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    image: Optional[str] = None
+    scan_url: Optional[str] = None
+
+
 class Agent(AgentRegister):
     """Agent with metadata"""
     id: str
     api_key: str
     created_at: datetime
     services_count: int = 0
+    erc8004: Optional[ERC8004Credentials] = None
 
 
 class ServiceCreate(BaseModel):
@@ -264,11 +280,30 @@ async def register_agent(agent_data: AgentRegister):
     agent_id = str(uuid.uuid4())
     api_key = f"mm_{secrets.token_urlsafe(32)}"
     
+    # Check for ERC-8004 credentials on Ethereum mainnet
+    erc8004_creds = None
+    try:
+        creds = await get_8004_credentials_simple(agent_data.wallet_address)
+        if creds:
+            erc8004_creds = ERC8004Credentials(
+                has_8004=creds.get("has_8004", False),
+                agent_id=creds.get("agent_id"),
+                agent_count=creds.get("agent_count"),
+                agent_registry=creds.get("agent_registry"),
+                name=creds.get("name"),
+                description=creds.get("description"),
+                image=creds.get("image"),
+                scan_url=creds.get("8004scan_url"),
+            )
+    except Exception as e:
+        print(f"Warning: Could not fetch ERC-8004 credentials: {e}")
+    
     # Create agent
     agent = Agent(
         id=agent_id,
         api_key=api_key,
         created_at=datetime.utcnow(),
+        erc8004=erc8004_creds,
         **agent_data.model_dump()
     )
     
@@ -282,6 +317,42 @@ async def register_agent(agent_data: AgentRegister):
 async def get_my_agent(agent: Agent = Depends(require_agent)):
     """Get your agent profile"""
     return agent
+
+
+@app.get("/agents/8004/{wallet_address}")
+async def check_8004_credentials(wallet_address: str):
+    """
+    Check ERC-8004 credentials for any wallet address.
+    
+    This queries Ethereum mainnet to check if the wallet owns
+    an ERC-8004 Trustless Agent NFT.
+    
+    Free endpoint - no payment required.
+    """
+    try:
+        creds = await get_8004_credentials_simple(wallet_address)
+        if creds:
+            return {
+                "wallet": wallet_address,
+                "verified": True,
+                "credentials": ERC8004Credentials(
+                    has_8004=creds.get("has_8004", False),
+                    agent_id=creds.get("agent_id"),
+                    agent_count=creds.get("agent_count"),
+                    agent_registry=creds.get("agent_registry"),
+                    name=creds.get("name"),
+                    description=creds.get("description"),
+                    image=creds.get("image"),
+                    scan_url=creds.get("8004scan_url"),
+                ),
+            }
+        return {
+            "wallet": wallet_address,
+            "verified": False,
+            "message": "No ERC-8004 agent NFT found on Ethereum mainnet",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error checking credentials: {str(e)}")
 
 
 # ============ SEED DATA ============

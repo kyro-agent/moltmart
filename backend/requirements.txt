@@ -6,3 +6,5 @@ python-dotenv>=1.0.0
 sqlalchemy>=2.0.0
 aiosqlite>=0.19.0
 x402[fastapi,httpx,evm]>=2.0.0
+eth-abi>=5.0.0
+eth-utils>=4.0.0
