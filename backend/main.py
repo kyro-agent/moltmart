@@ -342,7 +342,6 @@ async def root():
             "services_per_hour": SERVICES_PER_HOUR,
             "services_per_day": SERVICES_PER_DAY,
         },
-        "facilitator": FACILITATOR_URL,
         "network": "eip155:8453 (Base)",
         "token": "0xa6e3f88Ac4a9121B697F7bC9674C828d8d6D0B07",
     }
