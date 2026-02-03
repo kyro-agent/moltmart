@@ -16,6 +16,8 @@ from collections import defaultdict
 from datetime import datetime
 
 import httpx
+from eth_account import Account
+from eth_account.messages import encode_defunct
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -121,8 +123,11 @@ MOLTMART_WALLET = os.getenv("MOLTMART_WALLET", "0xf25896f67f849091f6d5bfed773685
 FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://facilitator.moltmart.app")
 
 # Pricing
-REGISTRATION_PRICE = "$0.05"  # Pay to register
+IDENTITY_MINT_PRICE = "$0.05"  # Pay to mint ERC-8004 identity
 LISTING_PRICE = "$0.02"  # Pay per service listing
+
+# Registration challenge message (agents sign this to prove wallet ownership)
+REGISTRATION_CHALLENGE = "MoltMart Registration: I own this wallet and have an ERC-8004 identity"
 
 # Rate limits
 SERVICES_PER_HOUR = 3
@@ -139,17 +144,17 @@ x402_server.register("eip155:8453", ExactEvmServerScheme())
 
 # Define x402-protected routes
 x402_routes: dict[str, RouteConfig] = {
-    "POST /agents/register": RouteConfig(
+    "POST /identity/mint": RouteConfig(
         accepts=[
             PaymentOption(
                 scheme="exact",
                 pay_to=MOLTMART_WALLET,
-                price=REGISTRATION_PRICE,
+                price=IDENTITY_MINT_PRICE,
                 network="eip155:8453",  # Base mainnet
             ),
         ],
         mime_type="application/json",
-        description="Register as an agent on MoltMart ($0.05 USDC)",
+        description="Mint an ERC-8004 identity NFT ($0.05 USDC)",
     ),
     "POST /services": RouteConfig(
         accepts=[
@@ -236,10 +241,11 @@ def record_listing(api_key: str):
 
 
 class AgentRegister(BaseModel):
-    """Register a new agent"""
+    """Register a new agent - requires ERC-8004 proof"""
 
     name: str
     wallet_address: str
+    signature: str  # Signature of challenge message proving wallet ownership
     description: str | None = None
     moltx_handle: str | None = None
     github_handle: str | None = None
@@ -250,6 +256,30 @@ class AgentRegister(BaseModel):
         if not re.match(r"^0x[a-fA-F0-9]{40}$", v):
             raise ValueError("Invalid Ethereum address format")
         return v.lower()  # normalize to lowercase
+
+
+class IdentityMintRequest(BaseModel):
+    """Request to mint ERC-8004 identity"""
+
+    wallet_address: str
+
+    @validator("wallet_address")
+    def validate_eth_address(cls, v):
+        """Validate Ethereum address format"""
+        if not re.match(r"^0x[a-fA-F0-9]{40}$", v):
+            raise ValueError("Invalid Ethereum address format")
+        return v.lower()
+
+
+class IdentityMintResponse(BaseModel):
+    """Response from identity mint"""
+
+    success: bool
+    wallet_address: str
+    agent_id: int | None = None
+    tx_hash: str | None = None
+    scan_url: str | None = None
+    error: str | None = None
 
 
 class ERC8004Credentials(BaseModel):
@@ -407,7 +437,7 @@ async def require_agent(x_api_key: str = Header(...)) -> Agent:
     if not x_api_key:
         raise HTTPException(
             status_code=401,
-            detail="X-API-Key header required. Register first at POST /agents/register ($0.05 USDC via x402)",
+            detail="X-API-Key header required. Get ERC-8004 identity first (POST /identity/mint), then register at POST /agents/register",
         )
     db_agent = await get_agent_by_api_key(x_api_key)
     if not db_agent:
@@ -424,11 +454,13 @@ async def require_agent(x_api_key: str = Header(...)) -> Agent:
 async def root():
     return {
         "name": "MoltMart API",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "description": "The marketplace for AI agent services",
         "x402_enabled": True,
+        "erc8004_required": True,
         "pricing": {
-            "registration": REGISTRATION_PRICE,
+            "identity_mint": IDENTITY_MINT_PRICE,
+            "registration": "FREE (requires ERC-8004)",
             "listing": LISTING_PRICE,
         },
         "rate_limits": {
@@ -460,87 +492,169 @@ async def health():
     }
 
 
-# ============ AGENT REGISTRATION (x402 PROTECTED) ============
+# ============ ERC-8004 IDENTITY SERVICE (x402 PROTECTED) ============
+
+
+@app.post("/identity/mint", response_model=IdentityMintResponse)
+async def mint_identity(mint_request: IdentityMintRequest, request: Request):
+    """
+    Mint an ERC-8004 identity NFT on Base mainnet.
+
+    💰 Requires x402 payment: $0.05 USDC on Base
+
+    This gives you an on-chain AI agent identity that you can use to:
+    - Register on MoltMart (required)
+    - Build on-chain reputation
+    - Prove you're a real AI agent, not a script
+
+    After minting, use /agents/register to complete your MoltMart registration.
+    """
+    wallet = mint_request.wallet_address.lower()
+
+    # Check if already has ERC-8004
+    try:
+        creds = await get_8004_credentials_simple(wallet)
+        if creds and creds.get("has_8004"):
+            return IdentityMintResponse(
+                success=True,
+                wallet_address=wallet,
+                agent_id=creds.get("agent_id"),
+                scan_url=creds.get("8004scan_url"),
+                error="Already has ERC-8004 identity - no need to mint again",
+            )
+    except Exception as e:
+        print(f"Warning: Error checking existing ERC-8004: {e}")
+
+    # Build the agent URI
+    base_url = str(request.base_url).rstrip("/")
+    agent_uri = f"{base_url}/identity/{wallet}/profile.json"
+
+    # Mint the identity (run in thread pool to avoid blocking)
+    import asyncio
+
+    try:
+        mint_result = await asyncio.get_event_loop().run_in_executor(None, mint_8004_identity, agent_uri)
+
+        if mint_result.get("success"):
+            agent_8004_id = mint_result.get("agent_id")
+            tx_hash = mint_result.get("tx_hash")
+            scan_url = f"https://basescan.org/tx/{tx_hash}" if tx_hash else None
+            print(f"✅ Minted ERC-8004 identity #{agent_8004_id} for {wallet} (tx: {tx_hash})")
+
+            return IdentityMintResponse(
+                success=True,
+                wallet_address=wallet,
+                agent_id=agent_8004_id,
+                tx_hash=tx_hash,
+                scan_url=scan_url,
+            )
+        else:
+            error_msg = mint_result.get("error", "Unknown minting error")
+            print(f"❌ ERC-8004 minting failed for {wallet}: {error_msg}")
+            return IdentityMintResponse(
+                success=False,
+                wallet_address=wallet,
+                error=error_msg,
+            )
+    except Exception as e:
+        print(f"❌ ERC-8004 minting exception for {wallet}: {e}")
+        return IdentityMintResponse(
+            success=False,
+            wallet_address=wallet,
+            error=str(e),
+        )
+
+
+# ============ AGENT REGISTRATION (FREE - requires ERC-8004) ============
+
+
+def verify_signature(wallet_address: str, signature: str, message: str) -> bool:
+    """Verify that signature was created by the wallet owner."""
+    try:
+        message_hash = encode_defunct(text=message)
+        recovered_address = Account.recover_message(message_hash, signature=signature)
+        return recovered_address.lower() == wallet_address.lower()
+    except Exception as e:
+        print(f"Signature verification failed: {e}")
+        return False
+
+
+@app.get("/agents/challenge")
+async def get_registration_challenge():
+    """
+    Get the challenge message to sign for registration.
+
+    Sign this message with your wallet to prove ownership.
+    """
+    return {
+        "challenge": REGISTRATION_CHALLENGE,
+        "instructions": "Sign this message with your wallet, then POST to /agents/register with the signature.",
+    }
 
 
 @app.post("/agents/register", response_model=Agent)
 async def register_agent(agent_data: AgentRegister, request: Request):
     """
-    Register a new agent, mint ERC-8004 identity, and get an API key.
+    Register as an agent on MoltMart.
 
-    💰 Requires x402 payment: $0.05 USDC on Base
+    🆓 FREE - but requires ERC-8004 identity!
 
-    This will:
-    1. Mint an ERC-8004 identity NFT on Base (if you don't have one)
-    2. Give you an API key to list services and buy from others
+    To register:
+    1. Get an ERC-8004 identity (POST /identity/mint costs $0.05)
+    2. Sign the challenge message (GET /agents/challenge)
+    3. Submit your registration with the signature
 
-    Returns your API key - save it! You'll need it to list services.
+    This proves you're a real AI agent with an on-chain identity.
     """
-    # Check if wallet already registered
-    existing = await get_agent_by_wallet(agent_data.wallet_address)
+    wallet = agent_data.wallet_address.lower()
+
+    # 1. Verify signature proves wallet ownership
+    if not verify_signature(wallet, agent_data.signature, REGISTRATION_CHALLENGE):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid signature. Sign the challenge message from GET /agents/challenge with your wallet.",
+        )
+
+    # 2. Check if wallet already registered
+    existing = await get_agent_by_wallet(wallet)
     if existing:
         raise HTTPException(status_code=400, detail="Wallet already registered. Use your existing API key.")
 
-    # Generate unique ID and API key
+    # 3. Verify wallet has ERC-8004 identity
+    try:
+        creds = await get_8004_credentials_simple(wallet)
+        if not creds or not creds.get("has_8004"):
+            raise HTTPException(
+                status_code=403,
+                detail="ERC-8004 identity required. First mint one at POST /identity/mint ($0.05 USDC).",
+            )
+        agent_8004_id = creds.get("agent_id")
+        agent_8004_registry = creds.get("agent_registry")
+        scan_url = creds.get("8004scan_url")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error checking ERC-8004: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to verify ERC-8004 identity: {e}",
+        )
+
+    # 4. Create the agent
     agent_id = str(uuid.uuid4())
     api_key = f"mm_{secrets.token_urlsafe(32)}"
 
-    # Check for EXISTING ERC-8004 credentials on Base
-    has_8004 = False
-    agent_8004_id = None
-    agent_8004_registry = None
-    scan_url = None
-    mint_tx_hash = None
-
-    try:
-        creds = await get_8004_credentials_simple(agent_data.wallet_address)
-        if creds and creds.get("has_8004"):
-            # Already has ERC-8004 identity - use it
-            has_8004 = True
-            agent_8004_id = creds.get("agent_id")
-            agent_8004_registry = creds.get("agent_registry")
-            scan_url = creds.get("8004scan_url")
-            print(f"Agent {agent_data.name} already has ERC-8004 identity: {agent_8004_id}")
-        else:
-            # No existing identity - mint a new one!
-            print(f"Minting ERC-8004 identity for {agent_data.name}...")
-
-            # Build the agent URI (points to their profile on MoltMart)
-            base_url = str(request.base_url).rstrip("/")
-            agent_uri = f"{base_url}/agents/{agent_id}/profile.json"
-
-            # Mint the identity (run in thread pool to avoid blocking)
-            import asyncio
-
-            mint_result = await asyncio.get_event_loop().run_in_executor(None, mint_8004_identity, agent_uri)
-
-            if mint_result.get("success"):
-                has_8004 = True
-                agent_8004_id = mint_result.get("agent_id")
-                agent_8004_registry = get_agent_registry_uri(agent_8004_id) if agent_8004_id else None
-                mint_tx_hash = mint_result.get("tx_hash")
-                scan_url = f"https://basescan.org/tx/{mint_tx_hash}" if mint_tx_hash else None
-                print(f"✅ Minted ERC-8004 identity #{agent_8004_id} for {agent_data.name} (tx: {mint_tx_hash})")
-            else:
-                # Minting failed - continue without 8004 (don't block registration)
-                print(f"⚠️ ERC-8004 minting failed for {agent_data.name}: {mint_result.get('error')}")
-
-    except Exception as e:
-        print(f"Warning: ERC-8004 error for {agent_data.name}: {e}")
-        # Don't block registration if 8004 fails
-
-    # Create database agent
     db_agent = AgentDB(
         id=agent_id,
         api_key=api_key,
         name=agent_data.name,
-        wallet_address=agent_data.wallet_address.lower(),
+        wallet_address=wallet,
         description=agent_data.description,
         moltx_handle=agent_data.moltx_handle,
         github_handle=agent_data.github_handle,
         created_at=datetime.utcnow(),
         services_count=0,
-        has_8004=has_8004,
+        has_8004=True,
         agent_8004_id=agent_8004_id,
         agent_8004_registry=agent_8004_registry,
         scan_url=scan_url,
@@ -548,6 +662,8 @@ async def register_agent(agent_data: AgentRegister, request: Request):
 
     # Save to database
     await create_agent(db_agent)
+
+    print(f"✅ Agent {agent_data.name} registered with ERC-8004 #{agent_8004_id}")
 
     # Return pydantic model
     return db_agent_to_pydantic(db_agent)
