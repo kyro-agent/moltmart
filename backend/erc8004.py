@@ -1,240 +1,331 @@
 """
-ERC-8004 Trustless Agents Integration
-
-Queries Ethereum mainnet for agent identity and reputation.
+ERC-8004 Integration for MoltMart
+Handles agent identity registration and reputation on Base mainnet
 """
 
-import os
 import json
-import httpx
-from typing import Optional, Dict, Any
-from functools import lru_cache
+import os
+from typing import Optional
+from web3 import Web3
+from eth_account import Account
 
-# Contract addresses (Ethereum Mainnet)
+# Base Mainnet
+BASE_CHAIN_ID = 8453
+BASE_RPC = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
+
+# ERC-8004 Contract Addresses on Base Mainnet
 IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
 REPUTATION_REGISTRY = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
 
-# Default public RPC (rate limited, replace with your own for production)
-ETH_RPC_URL = os.getenv("ETH_RPC_URL", "https://eth.llamarpc.com")
+# MoltMart operator wallet (same as facilitator - receives fees, mints identities)
+OPERATOR_PRIVATE_KEY = os.getenv("FACILITATOR_PRIVATE_KEY", "")
 
 # Load ABIs
 ABI_DIR = os.path.join(os.path.dirname(__file__), "abis")
 
+def load_abi(name: str) -> list:
+    """Load contract ABI from file"""
+    path = os.path.join(ABI_DIR, f"{name}.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            return json.load(f)
+    return []
 
-@lru_cache(maxsize=1)
-def get_identity_abi() -> list:
-    with open(os.path.join(ABI_DIR, "IdentityRegistry.json")) as f:
-        return json.load(f)
+# Initialize Web3
+w3 = Web3(Web3.HTTPProvider(BASE_RPC))
 
+# Load contract ABIs
+IDENTITY_ABI = load_abi("IdentityRegistry")
+REPUTATION_ABI = load_abi("ReputationRegistry")
 
-@lru_cache(maxsize=1)
-def get_reputation_abi() -> list:
-    with open(os.path.join(ABI_DIR, "ReputationRegistry.json")) as f:
-        return json.load(f)
+# Contract instances
+identity_registry = w3.eth.contract(
+    address=Web3.to_checksum_address(IDENTITY_REGISTRY),
+    abi=IDENTITY_ABI
+) if IDENTITY_ABI else None
 
-
-def encode_function_call(abi: list, function_name: str, args: list) -> str:
-    """Encode a function call using the ABI."""
-    from eth_abi import encode
-    from eth_utils import function_signature_to_4byte_selector
-    
-    # Find function in ABI
-    func = next((f for f in abi if f.get("name") == function_name and f.get("type") == "function"), None)
-    if not func:
-        raise ValueError(f"Function {function_name} not found in ABI")
-    
-    # Build signature
-    input_types = [inp["type"] for inp in func.get("inputs", [])]
-    signature = f"{function_name}({','.join(input_types)})"
-    selector = function_signature_to_4byte_selector(signature)
-    
-    # Encode arguments
-    if args:
-        encoded_args = encode(input_types, args)
-        return "0x" + selector.hex() + encoded_args.hex()
-    return "0x" + selector.hex()
+reputation_registry = w3.eth.contract(
+    address=Web3.to_checksum_address(REPUTATION_REGISTRY),
+    abi=REPUTATION_ABI
+) if REPUTATION_ABI else None
 
 
-async def eth_call(to: str, data: str) -> str:
-    """Make an eth_call to the Ethereum mainnet."""
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            ETH_RPC_URL,
-            json={
-                "jsonrpc": "2.0",
-                "method": "eth_call",
-                "params": [{"to": to, "data": data}, "latest"],
-                "id": 1,
-            },
-            timeout=10.0,
-        )
-        result = response.json()
-        if "error" in result:
-            raise Exception(f"RPC error: {result['error']}")
-        return result.get("result", "0x")
-
-
-async def get_agent_balance(wallet_address: str) -> int:
-    """Check how many agent NFTs a wallet owns."""
-    try:
-        abi = get_identity_abi()
-        data = encode_function_call(abi, "balanceOf", [wallet_address])
-        result = await eth_call(IDENTITY_REGISTRY, data)
-        return int(result, 16) if result and result != "0x" else 0
-    except Exception as e:
-        print(f"Error checking agent balance: {e}")
-        return 0
-
-
-async def get_agent_token_by_index(wallet_address: str, index: int = 0) -> Optional[int]:
-    """Get the agent token ID owned by a wallet at a given index."""
-    try:
-        abi = get_identity_abi()
-        data = encode_function_call(abi, "tokenOfOwnerByIndex", [wallet_address, index])
-        result = await eth_call(IDENTITY_REGISTRY, data)
-        return int(result, 16) if result and result != "0x" else None
-    except Exception as e:
-        print(f"Error getting agent token: {e}")
+def get_operator_account():
+    """Get the MoltMart operator account for signing transactions"""
+    if not OPERATOR_PRIVATE_KEY:
         return None
+    return Account.from_key(OPERATOR_PRIVATE_KEY)
 
 
-async def get_agent_uri(token_id: int) -> Optional[str]:
-    """Get the agent's registration file URI."""
-    try:
-        abi = get_identity_abi()
-        data = encode_function_call(abi, "tokenURI", [token_id])
-        result = await eth_call(IDENTITY_REGISTRY, data)
-        
-        if not result or result == "0x":
-            return None
-            
-        # Decode string from ABI encoding
-        # Skip first 64 chars (offset) + 64 chars (length), then decode hex to string
-        if len(result) > 130:
-            hex_str = result[130:]
-            # Remove trailing zeros and decode
-            uri_bytes = bytes.fromhex(hex_str.rstrip("0") if len(hex_str) % 2 == 0 else hex_str[:-1].rstrip("0"))
-            return uri_bytes.decode("utf-8", errors="ignore").rstrip("\x00")
-        return None
-    except Exception as e:
-        print(f"Error getting agent URI: {e}")
-        return None
-
-
-async def fetch_agent_registration(uri: str) -> Optional[Dict[str, Any]]:
-    """Fetch and parse the agent registration file."""
-    try:
-        # Handle IPFS URIs
-        if uri.startswith("ipfs://"):
-            uri = f"https://ipfs.io/ipfs/{uri[7:]}"
-        elif uri.startswith("data:"):
-            # Handle base64 data URIs
-            import base64
-            if "base64," in uri:
-                data = uri.split("base64,")[1]
-                return json.loads(base64.b64decode(data).decode())
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(uri, timeout=10.0, follow_redirects=True)
-            if response.status_code == 200:
-                return response.json()
-    except Exception as e:
-        print(f"Error fetching registration file: {e}")
-    return None
-
-
-async def get_8004_credentials(wallet_address: str) -> Optional[Dict[str, Any]]:
+def register_agent(agent_uri: str) -> dict:
     """
-    Get ERC-8004 credentials for a wallet address.
+    Register a new agent identity on ERC-8004
     
+    Args:
+        agent_uri: URI pointing to agent registration JSON (IPFS or HTTPS)
+        
     Returns:
-        {
-            "agent_id": 123,
-            "agent_registry": "eip155:1:0x8004A169...",
-            "name": "AgentName",
-            "description": "...",
-            "image": "https://...",
-            "services": [...],
-            "x402_support": True,
-            "8004scan_url": "https://8004scan.io/agent/123"
-        }
+        dict with agentId (tokenId) and transaction hash
     """
-    # Check if wallet has any agent NFTs
-    balance = await get_agent_balance(wallet_address)
-    if balance == 0:
-        return None
+    if not identity_registry:
+        return {"error": "Identity registry not configured"}
     
-    # Get the first agent token
-    token_id = await get_agent_token_by_index(wallet_address, 0)
-    if token_id is None:
-        return None
+    account = get_operator_account()
+    if not account:
+        return {"error": "Operator wallet not configured"}
     
-    # Get the registration file URI
-    uri = await get_agent_uri(token_id)
-    
-    credentials = {
-        "agent_id": token_id,
-        "agent_registry": f"eip155:1:{IDENTITY_REGISTRY}",
-        "8004scan_url": f"https://8004scan.io/agent/{token_id}",
-    }
-    
-    # Try to fetch registration file for more details
-    if uri:
-        registration = await fetch_agent_registration(uri)
-        if registration:
-            credentials.update({
-                "name": registration.get("name"),
-                "description": registration.get("description"),
-                "image": registration.get("image"),
-                "services": registration.get("services", []),
-                "x402_support": registration.get("x402Support", False),
-            })
-    
-    return credentials
-
-
-# Simplified version that doesn't need eth_abi (uses raw encoding)
-async def get_8004_credentials_simple(wallet_address: str) -> Optional[Dict[str, Any]]:
-    """
-    Simplified ERC-8004 lookup using raw RPC calls.
-    Falls back to this if eth_abi is not installed.
-    """
     try:
-        # balanceOf(address) selector = 0x70a08231
-        # Pad address to 32 bytes
-        padded_addr = wallet_address.lower().replace("0x", "").zfill(64)
-        data = f"0x70a08231{padded_addr}"
+        # Build transaction
+        nonce = w3.eth.get_transaction_count(account.address)
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                ETH_RPC_URL,
-                json={
-                    "jsonrpc": "2.0",
-                    "method": "eth_call",
-                    "params": [{"to": IDENTITY_REGISTRY, "data": data}, "latest"],
-                    "id": 1,
-                },
-                timeout=10.0,
-            )
-            result = response.json()
-            
-            if "error" in result:
-                return None
-                
-            balance = int(result.get("result", "0x0"), 16)
-            
-            if balance == 0:
-                return None
-            
-            # Has at least one agent - return basic info
-            # Full lookup would require tokenOfOwnerByIndex + tokenURI
-            return {
-                "has_8004": True,
-                "agent_count": balance,
-                "agent_registry": f"eip155:1:{IDENTITY_REGISTRY}",
-                "8004scan_url": f"https://8004scan.io/address/{wallet_address}",
-            }
-            
+        tx = identity_registry.functions.register(agent_uri).build_transaction({
+            'from': account.address,
+            'nonce': nonce,
+            'gas': 300000,
+            'gasPrice': w3.eth.gas_price,
+            'chainId': BASE_CHAIN_ID
+        })
+        
+        # Sign and send
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        
+        # Wait for receipt
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+        
+        # Parse the Registered event to get agentId
+        agent_id = None
+        for log in receipt.logs:
+            try:
+                decoded = identity_registry.events.Registered().process_log(log)
+                agent_id = decoded.args.agentId
+                break
+            except:
+                continue
+        
+        return {
+            "success": True,
+            "agent_id": agent_id,
+            "tx_hash": tx_hash.hex(),
+            "block": receipt.blockNumber
+        }
+        
     except Exception as e:
-        print(f"Error in simple 8004 lookup: {e}")
+        return {"error": str(e)}
+
+
+def get_agent_info(agent_id: int) -> dict:
+    """Get agent information from the registry"""
+    if not identity_registry:
+        return {"error": "Identity registry not configured"}
+    
+    try:
+        owner = identity_registry.functions.ownerOf(agent_id).call()
+        uri = identity_registry.functions.tokenURI(agent_id).call()
+        wallet = identity_registry.functions.getAgentWallet(agent_id).call()
+        
+        return {
+            "agent_id": agent_id,
+            "owner": owner,
+            "uri": uri,
+            "wallet": wallet if wallet != "0x0000000000000000000000000000000000000000" else None
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def give_feedback(agent_id: int, value: int = 1, tag: str = "service") -> dict:
+    """
+    Submit feedback for an agent after a successful transaction
+    
+    Args:
+        agent_id: The ERC-8004 agent tokenId
+        value: Feedback value (positive = good, negative = bad)
+        tag: Category tag (e.g., "service", "delivery", "quality")
+        
+    Returns:
+        dict with transaction hash
+    """
+    if not reputation_registry:
+        return {"error": "Reputation registry not configured"}
+    
+    account = get_operator_account()
+    if not account:
+        return {"error": "Operator wallet not configured"}
+    
+    try:
+        nonce = w3.eth.get_transaction_count(account.address)
+        
+        # giveFeedback(agentId, value, valueDecimals, tag1, tag2, endpoint, feedbackURI, feedbackHash)
+        tx = reputation_registry.functions.giveFeedback(
+            agent_id,           # agentId
+            value,              # value (int128)
+            0,                  # valueDecimals (0 = whole numbers)
+            tag,                # tag1
+            "",                 # tag2
+            "",                 # endpoint
+            "",                 # feedbackURI
+            b'\x00' * 32        # feedbackHash (empty)
+        ).build_transaction({
+            'from': account.address,
+            'nonce': nonce,
+            'gas': 200000,
+            'gasPrice': w3.eth.gas_price,
+            'chainId': BASE_CHAIN_ID
+        })
+        
+        signed = account.sign_transaction(tx)
+        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+        
+        return {
+            "success": True,
+            "tx_hash": tx_hash.hex(),
+            "block": receipt.blockNumber
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def get_reputation(agent_id: int, tag: str = "") -> dict:
+    """
+    Get reputation summary for an agent
+    
+    Args:
+        agent_id: The ERC-8004 agent tokenId
+        tag: Optional tag filter
+        
+    Returns:
+        dict with count and summary value
+    """
+    if not reputation_registry:
+        return {"error": "Reputation registry not configured"}
+    
+    try:
+        # getSummary(agentId, clientAddresses[], tag1, tag2)
+        count, value, decimals = reputation_registry.functions.getSummary(
+            agent_id,
+            [],     # all clients
+            tag,    # tag1 filter
+            ""      # tag2 filter
+        ).call()
+        
+        # Convert fixed-point to float
+        actual_value = value / (10 ** decimals) if decimals > 0 else value
+        
+        return {
+            "agent_id": agent_id,
+            "feedback_count": count,
+            "reputation_score": actual_value,
+            "decimals": decimals
+        }
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def get_agent_registry_uri(agent_id: int) -> str:
+    """
+    Build the full agent registry identifier
+    Format: eip155:{chainId}:{registryAddress}
+    """
+    return f"eip155:{BASE_CHAIN_ID}:{IDENTITY_REGISTRY}"
+
+
+# Health check
+def check_connection() -> dict:
+    """Verify connection to Base and contract access"""
+    try:
+        connected = w3.is_connected()
+        block = w3.eth.block_number if connected else None
+        
+        operator = get_operator_account()
+        operator_address = operator.address if operator else None
+        operator_balance = None
+        if operator_address and connected:
+            operator_balance = w3.eth.get_balance(operator_address)
+            operator_balance = w3.from_wei(operator_balance, 'ether')
+        
+        return {
+            "connected": connected,
+            "chain_id": BASE_CHAIN_ID,
+            "block": block,
+            "identity_registry": IDENTITY_REGISTRY,
+            "reputation_registry": REPUTATION_REGISTRY,
+            "operator": operator_address,
+            "operator_balance_eth": float(operator_balance) if operator_balance else None,
+            "identity_abi_loaded": bool(IDENTITY_ABI),
+            "reputation_abi_loaded": bool(REPUTATION_ABI)
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def get_8004_credentials_simple(wallet_address: str) -> Optional[dict]:
+    """
+    Check if a wallet has ERC-8004 credentials on Base mainnet.
+    Returns credentials dict or None.
+    
+    This is used during registration to display existing ERC-8004 identity.
+    """
+    if not identity_registry:
         return None
+    
+    try:
+        wallet = Web3.to_checksum_address(wallet_address)
+        
+        # Check balance of ERC-721 (how many agent NFTs this wallet owns)
+        balance = identity_registry.functions.balanceOf(wallet).call()
+        
+        if balance == 0:
+            return None
+        
+        # For now, we just return that they have credentials
+        # TODO: Get the actual token ID(s) owned by this wallet
+        # This would require iterating through Transfer events or using an indexer
+        
+        return {
+            "has_8004": True,
+            "agent_count": balance,
+            "agent_registry": f"eip155:{BASE_CHAIN_ID}:{IDENTITY_REGISTRY}",
+            "8004scan_url": f"https://basescan.org/address/{wallet}#nfttransfers",
+        }
+        
+    except Exception as e:
+        print(f"Error checking ERC-8004 credentials: {e}")
+        return None
+
+
+async def get_8004_credentials_full(wallet_address: str) -> Optional[dict]:
+    """
+    Get full ERC-8004 credentials including agent metadata.
+    More expensive - requires fetching tokenURI and parsing JSON.
+    """
+    basic = await get_8004_credentials_simple(wallet_address)
+    if not basic or not basic.get("has_8004"):
+        return None
+    
+    # TODO: Enumerate tokens owned by wallet and fetch their URIs
+    # This requires either:
+    # 1. Contract supports tokenOfOwnerByIndex (ERC721Enumerable)
+    # 2. Or we query Transfer events from the subgraph/indexer
+    
+    return basic
+
+
+if __name__ == "__main__":
+    import asyncio
+    
+    # Test connection
+    print("Connection check:")
+    print(json.dumps(check_connection(), indent=2))
+    
+    # Test credential check
+    async def test():
+        test_wallet = "0xf25896f67f849091f6d5bfed7736859aa42427b4"  # Kyro's wallet
+        creds = await get_8004_credentials_simple(test_wallet)
+        print(f"\nCredentials for {test_wallet}:")
+        print(json.dumps(creds, indent=2) if creds else "None")
+    
+    asyncio.run(test())
