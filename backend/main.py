@@ -479,8 +479,11 @@ async def register_agent(agent_data: AgentRegister, request: Request):
             base_url = str(request.base_url).rstrip('/')
             agent_uri = f"{base_url}/agents/{agent_id}/profile.json"
             
-            # Mint the identity
-            mint_result = mint_8004_identity(agent_uri)
+            # Mint the identity (run in thread pool to avoid blocking)
+            import asyncio
+            mint_result = await asyncio.get_event_loop().run_in_executor(
+                None, mint_8004_identity, agent_uri
+            )
             
             if mint_result.get("success"):
                 has_8004 = True
