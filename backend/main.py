@@ -16,6 +16,9 @@ import os
 import secrets
 import time
 import hashlib
+import hmac
+import httpx
+import json
 
 # ERC-8004 integration
 from erc8004 import get_8004_credentials_simple
@@ -683,6 +686,170 @@ async def get_stats():
         "categories": len(set(s.category for s in all_services)),
         "total_calls": sum(s.calls_count for s in all_services),
         "total_revenue_usdc": sum(s.revenue_usdc for s in all_services),
+    }
+
+
+# ============ PROXY ENDPOINT ============
+
+# Transaction log for audit
+transactions_log: list = []
+
+
+def generate_hmac_signature(body: str, timestamp: int, service_id: str, secret_token: str) -> str:
+    """Generate HMAC-SHA256 signature for request verification"""
+    message = f"{body}|{timestamp}|{service_id}"
+    return hmac.new(
+        secret_token.encode(),
+        message.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+
+@app.post("/services/{service_id}/call")
+async def call_service(service_id: str, request: Request, agent: Agent = Depends(require_agent)):
+    """
+    Call a service through MoltMart's proxy.
+    
+    🔐 Requires authentication (X-API-Key header)
+    💰 Payment: Direct transfer to seller's wallet via Bankr
+    
+    Flow:
+    1. Buyer calls this endpoint with request body
+    2. MoltMart forwards to seller's endpoint with HMAC signature
+    3. Seller verifies signature, processes request
+    4. Response returned to buyer
+    
+    Headers sent to seller:
+    - X-MoltMart-Token: Secret token for basic auth
+    - X-MoltMart-Signature: HMAC-SHA256(body|timestamp|service_id, secret_token)
+    - X-MoltMart-Timestamp: Unix timestamp (verify within 60s)
+    - X-MoltMart-Buyer: Buyer's wallet address
+    - X-MoltMart-Tx: Transaction ID for audit
+    """
+    # Get service
+    if service_id not in services_db:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    service = services_db[service_id]
+    
+    # Check if service has an endpoint
+    if not service.endpoint_url:
+        raise HTTPException(
+            status_code=400, 
+            detail="This service does not have a callable endpoint"
+        )
+    
+    # Get request body
+    try:
+        body = await request.body()
+        body_str = body.decode('utf-8') if body else ""
+    except Exception:
+        body_str = ""
+    
+    # Generate transaction ID
+    tx_id = f"mm_tx_{secrets.token_urlsafe(16)}"
+    timestamp = int(time.time())
+    
+    # Generate HMAC signature
+    # The seller can verify this to ensure the request came from MoltMart
+    signature = generate_hmac_signature(
+        body_str, 
+        timestamp, 
+        service_id, 
+        service.secret_token_hash  # Using the stored hash as the shared secret
+    )
+    
+    # Prepare headers for seller
+    headers = {
+        "Content-Type": "application/json",
+        "X-MoltMart-Token": service.secret_token_hash[:32],  # Partial token for basic auth
+        "X-MoltMart-Signature": signature,
+        "X-MoltMart-Timestamp": str(timestamp),
+        "X-MoltMart-Buyer": agent.wallet_address,
+        "X-MoltMart-Buyer-Name": agent.name,
+        "X-MoltMart-Tx": tx_id,
+        "X-MoltMart-Service": service_id,
+    }
+    
+    # Log transaction
+    tx_log = {
+        "tx_id": tx_id,
+        "service_id": service_id,
+        "service_name": service.name,
+        "buyer_wallet": agent.wallet_address,
+        "buyer_name": agent.name,
+        "seller_wallet": service.provider_wallet,
+        "price_usdc": service.price_usdc,
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": "pending",
+    }
+    transactions_log.append(tx_log)
+    
+    # Forward request to seller's endpoint
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                str(service.endpoint_url),
+                content=body,
+                headers=headers,
+            )
+        
+        # Update transaction log
+        tx_log["status"] = "completed" if response.status_code == 200 else "failed"
+        tx_log["seller_response_code"] = response.status_code
+        
+        # Update service stats
+        service.calls_count += 1
+        if response.status_code == 200:
+            service.revenue_usdc += service.price_usdc
+        
+        # Return seller's response to buyer
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            headers={
+                "X-MoltMart-Tx": tx_id,
+                "X-MoltMart-Price": str(service.price_usdc),
+                "X-MoltMart-Seller": service.provider_wallet,
+            },
+            media_type=response.headers.get("content-type", "application/json"),
+        )
+        
+    except httpx.TimeoutException:
+        tx_log["status"] = "timeout"
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error": "Seller endpoint timed out",
+                "tx_id": tx_id,
+                "service_id": service_id,
+            }
+        )
+    except httpx.RequestError as e:
+        tx_log["status"] = "error"
+        tx_log["error"] = str(e)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "Failed to reach seller endpoint",
+                "tx_id": tx_id,
+                "service_id": service_id,
+                "message": str(e),
+            }
+        )
+
+
+@app.get("/transactions/mine")
+async def get_my_transactions(agent: Agent = Depends(require_agent), limit: int = 20):
+    """Get your recent transactions (as buyer or seller)"""
+    my_txs = [
+        tx for tx in transactions_log
+        if tx["buyer_wallet"].lower() == agent.wallet_address.lower()
+        or tx["seller_wallet"].lower() == agent.wallet_address.lower()
+    ]
+    return {
+        "transactions": my_txs[-limit:],
+        "total": len(my_txs),
     }
 
 
