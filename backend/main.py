@@ -3,13 +3,14 @@ MoltMart Backend - Service Registry for AI Agents
 x402-native marketplace for agent services
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, HttpUrl
 from typing import Optional, List
 from datetime import datetime
 import uuid
 import os
+import secrets
 
 # x402 payment protocol (official Coinbase SDK)
 try:
@@ -49,6 +50,46 @@ if X402_AVAILABLE and os.getenv("ENABLE_X402", "false").lower() == "true":
 
 # In-memory storage for MVP (replace with DB later)
 services_db: dict = {}
+agents_db: dict = {}  # api_key -> agent info
+
+
+# ============ AGENT MODELS ============
+
+class AgentRegister(BaseModel):
+    """Register a new agent"""
+    name: str  # Agent name (e.g., "@Kyro")
+    wallet_address: str  # Wallet for receiving payments
+    description: Optional[str] = None
+    moltx_handle: Optional[str] = None
+    github_handle: Optional[str] = None
+
+
+class Agent(AgentRegister):
+    """Agent with metadata"""
+    id: str
+    api_key: str
+    created_at: datetime
+    services_count: int = 0
+
+
+# ============ AUTH ============
+
+async def get_current_agent(x_api_key: str = Header(None)) -> Optional[Agent]:
+    """Validate API key and return agent"""
+    if not x_api_key:
+        return None
+    agent = agents_db.get(x_api_key)
+    return agent
+
+
+async def require_agent(x_api_key: str = Header(...)) -> Agent:
+    """Require valid API key"""
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="X-API-Key header required")
+    agent = agents_db.get(x_api_key)
+    if not agent:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return agent
 
 
 class ServiceCreate(BaseModel):
@@ -58,8 +99,9 @@ class ServiceCreate(BaseModel):
     endpoint: HttpUrl
     price_usdc: float  # Price per request in USDC
     category: str
-    provider_name: str  # Agent name (e.g., "@Kyro")
-    provider_wallet: str  # Wallet address for x402 payments
+    # These are optional - filled from agent profile if not provided
+    provider_name: Optional[str] = None
+    provider_wallet: Optional[str] = None
     x402_enabled: bool = True
     # ERC-8004 Trustless Agents integration
     erc8004_agent_id: Optional[int] = None  # On-chain agent ID
@@ -98,6 +140,39 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+
+# ============ AGENT REGISTRATION ============
+
+@app.post("/agents/register", response_model=Agent)
+async def register_agent(agent_data: AgentRegister):
+    """
+    Register a new agent and get an API key.
+    
+    Returns your API key - save it! You'll need it to list services.
+    """
+    # Generate unique ID and API key
+    agent_id = str(uuid.uuid4())
+    api_key = f"mm_{secrets.token_urlsafe(32)}"
+    
+    # Create agent
+    agent = Agent(
+        id=agent_id,
+        api_key=api_key,
+        created_at=datetime.utcnow(),
+        **agent_data.model_dump()
+    )
+    
+    # Store by API key for fast lookup
+    agents_db[api_key] = agent
+    
+    return agent
+
+
+@app.get("/agents/me")
+async def get_my_agent(agent: Agent = Depends(require_agent)):
+    """Get your agent profile"""
+    return agent
 
 
 # ============ SEED DATA - KYRO'S SERVICES ============
@@ -143,15 +218,29 @@ async def seed_kyro_services():
 # ============ SERVICE REGISTRY ============
 
 @app.post("/services", response_model=Service)
-async def create_service(service: ServiceCreate):
-    """Register a new service on the marketplace"""
+async def create_service(service: ServiceCreate, agent: Agent = Depends(require_agent)):
+    """
+    Register a new service on the marketplace.
+    
+    Requires X-API-Key header with your agent's API key.
+    """
     service_id = str(uuid.uuid4())
+    
+    # Use agent's info for provider details
+    service_data = service.model_dump()
+    service_data["provider_name"] = agent.name
+    service_data["provider_wallet"] = agent.wallet_address
+    
     new_service = Service(
         id=service_id,
         created_at=datetime.utcnow(),
-        **service.model_dump()
+        **service_data
     )
     services_db[service_id] = new_service
+    
+    # Update agent's service count
+    agent.services_count += 1
+    
     return new_service
 
 
