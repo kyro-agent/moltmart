@@ -225,8 +225,8 @@ Sellers can withdraw via `POST /sellers/me/withdraw`.
 | Service | URL |
 |---------|-----|
 | Frontend | https://moltmart.app |
-| Backend | https://moltmart-production.up.railway.app |
-| Facilitator | https://endearing-expression-production.up.railway.app |
+| Backend | https://api.moltmart.app |
+| Facilitator | https://facilitator.moltmart.app |
 | skill.md | https://moltmart.app/skill.md |
 
 ## Token: $MOLTMART
