@@ -14,6 +14,8 @@ import uuid
 import os
 import secrets
 import time
+import httpx
+import json
 
 # ERC-8004 integration
 from erc8004 import get_8004_credentials_simple
@@ -192,6 +194,9 @@ class ServiceCreate(BaseModel):
     x402_enabled: bool = True
     erc8004_agent_id: Optional[int] = None
     erc8004_registry: Optional[str] = None
+    # Secret token for authenticating requests from MoltMart to seller
+    # Auto-generated if not provided
+    secret_token: Optional[str] = None
 
 
 class Service(ServiceCreate):
@@ -387,6 +392,7 @@ async def seed_kyro_services():
             "provider_name": "@Kyro",
             "provider_wallet": "0xf25896f67f849091f6d5bfed7736859aa42427b4",
             "x402_enabled": True,
+            "secret_token": "mms_kyro_pr_review_internal",
             "created_at": datetime.utcnow(),
             "calls_count": 0,
             "revenue_usdc": 0.0,
@@ -401,6 +407,7 @@ async def seed_kyro_services():
             "provider_name": "@Kyro",
             "provider_wallet": "0xf25896f67f849091f6d5bfed7736859aa42427b4",
             "x402_enabled": True,
+            "secret_token": "mms_kyro_moltx_promo_internal",
             "created_at": datetime.utcnow(),
             "calls_count": 0,
             "revenue_usdc": 0.0,
@@ -434,6 +441,10 @@ async def create_service(service: ServiceCreate, agent: Agent = Depends(require_
     service_data = service.model_dump()
     service_data["provider_name"] = agent.name
     service_data["provider_wallet"] = agent.wallet_address
+    
+    # Auto-generate secret token if not provided
+    if not service_data.get("secret_token"):
+        service_data["secret_token"] = f"mms_{secrets.token_urlsafe(32)}"
     
     new_service = Service(
         id=service_id,
@@ -567,6 +578,220 @@ async def get_stats():
         "total_calls": sum(s.calls_count for s in all_services),
         "total_revenue_usdc": sum(s.revenue_usdc for s in all_services),
     }
+
+
+# ============ PROXY ENDPOINT (x402 PROTECTED) ============
+
+# Transaction log for audit
+transactions_log: list = []
+
+
+class ServiceCallRequest(BaseModel):
+    """Request body for calling a service"""
+    # Flexible body - passed through to seller
+    class Config:
+        extra = "allow"
+
+
+@app.post("/services/{service_id}/call")
+async def call_service(service_id: str, request: Request):
+    """
+    Call a service through MoltMart's proxy.
+    
+    💰 Requires x402 payment: Service price in USDC on Base
+    
+    Flow:
+    1. Buyer calls this endpoint with request body
+    2. x402 payment verified (service's price)
+    3. MoltMart forwards to seller's endpoint with auth headers
+    4. Seller's response returned to buyer
+    
+    Headers sent to seller:
+    - X-MoltMart-Token: Secret token for authentication
+    - X-MoltMart-Buyer: Buyer's wallet address (from payment)
+    - X-MoltMart-Tx: Transaction ID for audit
+    """
+    # Get service
+    if service_id not in services_db:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    service = services_db[service_id]
+    
+    # Check if x402 is enabled for this service
+    if not service.x402_enabled:
+        raise HTTPException(
+            status_code=400, 
+            detail="This service does not accept x402 payments through MoltMart"
+        )
+    
+    # Check for X-PAYMENT header (x402 payment proof)
+    payment_header = request.headers.get("X-PAYMENT")
+    if not payment_header:
+        # Return 402 Payment Required with payment details
+        payment_details = {
+            "x402Version": "1.0",
+            "accepts": [
+                {
+                    "scheme": "exact",
+                    "network": "eip155:8453",
+                    "payTo": service.provider_wallet,
+                    "price": f"${service.price_usdc}",
+                    "asset": "0xa6e3f88Ac4a9121B697F7bC9674C828d8d6D0B07",  # $MOLTMART token
+                }
+            ],
+            "facilitator": FACILITATOR_URL,
+            "description": f"Payment for {service.name} (${service.price_usdc} USDC)",
+        }
+        return JSONResponse(
+            status_code=402,
+            content=payment_details,
+            headers={"X-PAYMENT-REQUIRED": json.dumps(payment_details)}
+        )
+    
+    # Verify the payment using x402 server
+    try:
+        # Parse the payment header
+        payment_data = json.loads(payment_header)
+        
+        # Create expected payment option for verification
+        expected_payment = PaymentOption(
+            scheme="exact",
+            pay_to=service.provider_wallet,
+            price=f"${service.price_usdc}",
+            network="eip155:8453",
+        )
+        
+        # Verify payment with facilitator
+        verification = await x402_server.verify(
+            payment_data,
+            expected_payment,
+        )
+        
+        if not verification.valid:
+            raise HTTPException(
+                status_code=402, 
+                detail=f"Payment verification failed: {verification.reason}"
+            )
+        
+        # Extract buyer wallet from payment
+        buyer_wallet = payment_data.get("payload", {}).get("payer", "unknown")
+        
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid X-PAYMENT header format")
+    except Exception as e:
+        raise HTTPException(status_code=402, detail=f"Payment verification error: {str(e)}")
+    
+    # Generate transaction ID
+    tx_id = f"tx_{uuid.uuid4().hex[:16]}"
+    
+    # Get request body
+    try:
+        body = await request.json()
+    except:
+        body = {}
+    
+    # Forward request to seller's endpoint
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            seller_response = await client.post(
+                str(service.endpoint),
+                json=body,
+                headers={
+                    "X-MoltMart-Token": service.secret_token or "",
+                    "X-MoltMart-Buyer": buyer_wallet,
+                    "X-MoltMart-Tx": tx_id,
+                    "Content-Type": "application/json",
+                    "User-Agent": "MoltMart/1.0",
+                }
+            )
+    except httpx.TimeoutException:
+        # Log failed transaction
+        transactions_log.append({
+            "tx_id": tx_id,
+            "service_id": service_id,
+            "buyer_wallet": buyer_wallet,
+            "amount_usdc": service.price_usdc,
+            "status": "seller_timeout",
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+        raise HTTPException(
+            status_code=504, 
+            detail="Seller endpoint timed out. Payment was processed - contact seller for resolution."
+        )
+    except httpx.RequestError as e:
+        # Log failed transaction
+        transactions_log.append({
+            "tx_id": tx_id,
+            "service_id": service_id,
+            "buyer_wallet": buyer_wallet,
+            "amount_usdc": service.price_usdc,
+            "status": "seller_unreachable",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+        raise HTTPException(
+            status_code=502, 
+            detail="Could not reach seller endpoint. Payment was processed - contact seller for resolution."
+        )
+    
+    # Update service stats
+    service.calls_count += 1
+    service.revenue_usdc += service.price_usdc
+    
+    # Log successful transaction
+    transactions_log.append({
+        "tx_id": tx_id,
+        "service_id": service_id,
+        "service_name": service.name,
+        "buyer_wallet": buyer_wallet,
+        "seller_wallet": service.provider_wallet,
+        "amount_usdc": service.price_usdc,
+        "status": "completed",
+        "seller_status_code": seller_response.status_code,
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+    
+    # Return seller's response
+    try:
+        seller_data = seller_response.json()
+    except:
+        seller_data = {"raw_response": seller_response.text}
+    
+    return {
+        "success": True,
+        "tx_id": tx_id,
+        "service": service.name,
+        "price_usdc": service.price_usdc,
+        "seller_response": seller_data,
+        "seller_status_code": seller_response.status_code,
+    }
+
+
+@app.get("/transactions")
+async def list_transactions(limit: int = 50, offset: int = 0):
+    """
+    List recent transactions (for audit purposes).
+    
+    Note: In production, this should be admin-only.
+    """
+    total = len(transactions_log)
+    # Return most recent first
+    recent = list(reversed(transactions_log))[offset:offset + limit]
+    return {
+        "transactions": recent,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@app.get("/transactions/{tx_id}")
+async def get_transaction(tx_id: str):
+    """Get a specific transaction by ID"""
+    for tx in transactions_log:
+        if tx["tx_id"] == tx_id:
+            return tx
+    raise HTTPException(status_code=404, detail="Transaction not found")
 
 
 if __name__ == "__main__":
