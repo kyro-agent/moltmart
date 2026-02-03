@@ -435,30 +435,57 @@ class ReputationFeedback(BaseModel):
     service_id: str
     rating: int
     comment: Optional[str] = None
-    caller_wallet: str
-    tx_hash: Optional[str] = None
+    tx_hash: Optional[str] = None  # Optional proof of transaction
 
 feedback_db: list = []
 
 @app.post("/feedback")
-async def submit_feedback(feedback: ReputationFeedback):
-    """Submit feedback for a service"""
+async def submit_feedback(feedback: ReputationFeedback, agent: Agent = Depends(require_agent)):
+    """
+    Submit feedback for a service.
+    
+    🔐 Requires authentication (X-API-Key header)
+    
+    Constraints:
+    - Cannot review your own services
+    - One review per service per agent
+    """
     if feedback.service_id not in services_db:
         raise HTTPException(status_code=404, detail="Service not found")
     
+    service = services_db[feedback.service_id]
+    
+    # Prevent self-reviews
+    if service.provider_wallet and service.provider_wallet.lower() == agent.wallet_address.lower():
+        raise HTTPException(status_code=403, detail="Cannot review your own service")
+    
     if not 1 <= feedback.rating <= 5:
         raise HTTPException(status_code=400, detail="Rating must be 1-5")
+    
+    # Prevent duplicate reviews (one per service per agent)
+    existing_review = next(
+        (f for f in feedback_db 
+         if f["service_id"] == feedback.service_id 
+         and f["caller_wallet"].lower() == agent.wallet_address.lower()),
+        None
+    )
+    if existing_review:
+        raise HTTPException(
+            status_code=409, 
+            detail="You have already reviewed this service. Update not supported yet."
+        )
     
     feedback_db.append({
         "service_id": feedback.service_id,
         "rating": feedback.rating,
         "comment": feedback.comment,
-        "caller_wallet": feedback.caller_wallet,
+        "caller_wallet": agent.wallet_address,  # Use authenticated wallet, not self-reported
+        "caller_name": agent.name,
         "tx_hash": feedback.tx_hash,
         "timestamp": datetime.utcnow().isoformat(),
     })
     
-    return {"status": "submitted", "message": "Feedback recorded"}
+    return {"status": "submitted", "message": "Feedback recorded", "agent": agent.name}
 
 
 @app.get("/services/{service_id}/reputation")
