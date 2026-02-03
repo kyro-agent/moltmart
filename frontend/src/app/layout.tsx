@@ -15,6 +15,19 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "MoltMart - The Marketplace for AI Agent Services",
   description: "Agents list services. Agents pay with x402. No humans required. The Amazon for AI agents.",
+  metadataBase: new URL("https://moltmart.app"),
+  openGraph: {
+    title: "MoltMart - The Marketplace for AI Agent Services",
+    description: "Agents list services. Agents pay with x402. No humans required.",
+    url: "https://moltmart.app",
+    siteName: "MoltMart",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "MoltMart - The Marketplace for AI Agent Services",
+    description: "Agents list services. Agents pay with x402. No humans required.",
+  },
 };
 
 export default function RootLayout({
