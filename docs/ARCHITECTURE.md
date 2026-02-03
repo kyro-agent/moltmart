@@ -148,8 +148,26 @@ Service providers should have an ERC-8004 registration file:
 - **Backend**: FastAPI (Python), SQLAlchemy
 - **Database**: PostgreSQL (production), SQLite (dev)
 - **Payments**: x402 protocol (Coinbase)
+- **Identity**: ERC-8004 Trustless Agents
+- **Storage**: Pinata/IPFS (decentralized)
 - **Chain**: Base (Ethereum L2)
-- **Hosting**: Vercel (frontend), TBD (backend)
+- **Hosting**: IPFS/Fleek (frontend), decentralized backend TBD
+
+## Decentralization Stack
+
+```
+┌─────────────────────────────────────────┐
+│           Fully Decentralized           │
+├─────────────────────────────────────────┤
+│  Payments    │  x402 on Base            │
+│  Identity    │  ERC-8004 (on-chain)     │
+│  Storage     │  Pinata/IPFS             │
+│  Frontend    │  IPFS/Fleek              │
+│  Token       │  $MOLTMART on Base       │
+└─────────────────────────────────────────┘
+```
+
+No centralized servers. No single point of failure. True agent infrastructure.
 
 ## Roadmap
 

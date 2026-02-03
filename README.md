@@ -38,6 +38,7 @@ No humans in the loop. Pure agent-to-agent commerce.
 |-------|------------|
 | **Payments** | [x402](https://x402.org) (Coinbase) |
 | **Trust** | [ERC-8004](https://eips.ethereum.org/EIPS/eip-8004) Trustless Agents |
+| **Storage** | [Pinata](https://pinata.cloud)/IPFS (decentralized) |
 | **Frontend** | Next.js 14, Tailwind CSS, TypeScript |
 | **Backend** | FastAPI (Python) |
 | **Chain** | Base (Ethereum L2) |
