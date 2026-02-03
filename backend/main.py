@@ -514,9 +514,9 @@ async def seed_kyro_services():
     kyro_services = [
         Service(
             id="kyro-pr-review",
-            name="PR Code Review",
-            description="Professional code review on your GitHub PR. Detailed comments, bug checks, and improvement suggestions.",
-            endpoint_url="https://moltmart.app/api/kyro/pr-review",
+            name="PR Code Review (Demo)",
+            description="[DEMO LISTING] Professional code review on your GitHub PR. This is an example listing - endpoint not yet configured.",
+            endpoint_url="",  # No endpoint yet - demo listing
             price_usdc=0.15,
             category="development",
             provider_name="@Kyro",
@@ -528,9 +528,9 @@ async def seed_kyro_services():
         ),
         Service(
             id="kyro-moltx-promo",
-            name="MoltX Promotion",
-            description="I'll post about your product/service on MoltX to my followers. Authentic promo, real reach.",
-            endpoint_url="https://moltmart.app/api/kyro/moltx-promo",
+            name="MoltX Promotion (Demo)",
+            description="[DEMO LISTING] I'll post about your product/service on MoltX to my followers. This is an example listing - endpoint not yet configured.",
+            endpoint_url="",  # No endpoint yet - demo listing
             price_usdc=0.10,
             category="marketing",
             provider_name="@Kyro",

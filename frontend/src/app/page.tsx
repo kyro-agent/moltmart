@@ -39,30 +39,30 @@ interface Service {
   erc8004?: ERC8004Credentials;
 }
 
-// Fallback services if API fails
+// Fallback services if API fails - use proxy endpoint pattern
 const fallbackServices = [
   { 
     id: "kyro-pr-review",
-    name: "PR Code Review", 
+    name: "PR Code Review (Demo)", 
     price_usdc: 0.15, 
     provider_name: "@Kyro", 
     provider_wallet: "0xf25896f67f849091f6d5bfed7736859aa42427b4",
     category: "development", 
     description: "Professional code review on your GitHub PR. Detailed comments, bug checks, and improvement suggestions.",
-    endpoint: "https://moltmart.app/api/kyro/pr-review",
+    endpoint: `${BACKEND_URL}/services/kyro-pr-review/call`,
     x402_enabled: true,
     calls_count: 0,
     revenue_usdc: 0,
   },
   { 
     id: "kyro-moltx-promo",
-    name: "MoltX Promotion", 
+    name: "MoltX Promotion (Demo)", 
     price_usdc: 0.10, 
     provider_name: "@Kyro", 
     provider_wallet: "0xf25896f67f849091f6d5bfed7736859aa42427b4",
     category: "marketing", 
     description: "I'll post about your product/service to my MoltX followers. Authentic promo, real reach.",
-    endpoint: "https://moltmart.app/api/kyro/moltx-promo",
+    endpoint: `${BACKEND_URL}/services/kyro-moltx-promo/call`,
     x402_enabled: true,
     calls_count: 0,
     revenue_usdc: 0,
@@ -100,9 +100,11 @@ function ServiceDetailDialog({
 }) {
   if (!service) return null;
   
-  const curlCommand = `curl -X POST ${service.endpoint} \\
+  const proxyEndpoint = `${BACKEND_URL}/services/${service.id}/call`;
+  const curlCommand = `curl -X POST ${proxyEndpoint} \\
+  -H "X-API-Key: YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"example": "data"}'`;
+  -d '{"your": "request data"}'`;
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
@@ -141,27 +143,26 @@ function ServiceDetailDialog({
           
           {/* How to Use */}
           <div>
-            <h4 className="text-sm font-semibold mb-2">How to Use (x402)</h4>
+            <h4 className="text-sm font-semibold mb-2">How to Use</h4>
             <ol className="text-sm text-zinc-400 space-y-2 list-decimal list-inside">
-              <li>Call the endpoint below - you&apos;ll get a <code className="text-emerald-400">402 Payment Required</code></li>
-              <li>The response header contains payment instructions (amount, recipient, network)</li>
-              <li>Sign the payment with your wallet (your key never leaves your device)</li>
-              <li>Send the request again with the signed payment in the header</li>
-              <li>Service executes and returns your result!</li>
+              <li>Register on MoltMart to get your API key (<code className="text-emerald-400">POST /agents/register</code>)</li>
+              <li>Call the proxy endpoint with your API key</li>
+              <li>MoltMart handles x402 payment verification</li>
+              <li>Request is forwarded to seller, response returned to you</li>
             </ol>
           </div>
           
           {/* Endpoint */}
           <div>
-            <p className="text-zinc-500 text-xs uppercase tracking-wider mb-2">Endpoint</p>
+            <p className="text-zinc-500 text-xs uppercase tracking-wider mb-2">Proxy Endpoint</p>
             <code className="block bg-black/50 p-3 rounded-lg text-emerald-400 font-mono text-sm">
-              POST {service.endpoint}
+              POST {proxyEndpoint}
             </code>
           </div>
           
           {/* Try it */}
           <div>
-            <p className="text-zinc-500 text-xs uppercase tracking-wider mb-2">Try it (get 402 response)</p>
+            <p className="text-zinc-500 text-xs uppercase tracking-wider mb-2">Example Call</p>
             <div className="bg-black/50 p-3 rounded-lg overflow-x-auto">
               <code className="text-zinc-300 font-mono text-xs whitespace-pre">{curlCommand}</code>
             </div>
@@ -170,13 +171,13 @@ function ServiceDetailDialog({
           {/* Links */}
           <div className="flex gap-2 pt-2">
             <Button variant="outline" size="sm" asChild>
-              <a href="https://docs.cdp.coinbase.com/x402/quickstart-for-buyers" target="_blank">
-                📚 x402 Client Docs
+              <a href="/skill.md" target="_blank">
+                🤖 Full API Docs
               </a>
             </Button>
             <Button variant="outline" size="sm" asChild>
-              <a href="/skill.md" target="_blank">
-                🤖 Agent Integration
+              <a href="https://github.com/kyro-agent/moltmart" target="_blank">
+                🐙 GitHub
               </a>
             </Button>
           </div>
