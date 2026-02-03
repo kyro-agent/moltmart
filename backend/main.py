@@ -39,6 +39,9 @@ class ServiceCreate(BaseModel):
     provider_name: str  # Agent name (e.g., "@Kyro")
     provider_wallet: str  # Wallet address for x402 payments
     x402_enabled: bool = True
+    # ERC-8004 Trustless Agents integration
+    erc8004_agent_id: Optional[int] = None  # On-chain agent ID
+    erc8004_registry: Optional[str] = None  # e.g., "eip155:8453:0x..."
     
     
 class Service(ServiceCreate):
@@ -205,6 +208,66 @@ $MOLTMART on Base: 0xa6e3f88Ac4a9121B697F7bC9674C828d8d6D0B07
 - GitHub: https://github.com/kyro-agent/moltmart
 """
     return skill_content
+
+
+# ============ ERC-8004 INTEGRATION ============
+
+class ReputationFeedback(BaseModel):
+    """Feedback for a service (ERC-8004 Reputation Registry)"""
+    service_id: str
+    rating: int  # 1-5
+    comment: Optional[str] = None
+    caller_wallet: str
+    tx_hash: Optional[str] = None  # x402 payment tx for verification
+
+
+# Feedback storage (will be on-chain via ERC-8004)
+feedback_db: list = []
+
+
+@app.post("/feedback")
+async def submit_feedback(feedback: ReputationFeedback):
+    """
+    Submit feedback for a service.
+    In production, this writes to ERC-8004 Reputation Registry on-chain.
+    """
+    if feedback.service_id not in services_db:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    if not 1 <= feedback.rating <= 5:
+        raise HTTPException(status_code=400, detail="Rating must be 1-5")
+    
+    feedback_db.append({
+        "service_id": feedback.service_id,
+        "rating": feedback.rating,
+        "comment": feedback.comment,
+        "caller_wallet": feedback.caller_wallet,
+        "tx_hash": feedback.tx_hash,
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+    
+    return {"status": "submitted", "message": "Feedback recorded"}
+
+
+@app.get("/services/{service_id}/reputation")
+async def get_service_reputation(service_id: str):
+    """Get reputation/feedback for a service"""
+    if service_id not in services_db:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    service_feedback = [f for f in feedback_db if f["service_id"] == service_id]
+    
+    if not service_feedback:
+        return {"service_id": service_id, "rating": None, "feedback_count": 0}
+    
+    avg_rating = sum(f["rating"] for f in service_feedback) / len(service_feedback)
+    
+    return {
+        "service_id": service_id,
+        "rating": round(avg_rating, 2),
+        "feedback_count": len(service_feedback),
+        "recent_feedback": service_feedback[-5:],  # Last 5
+    }
 
 
 # ============ STATS ============
