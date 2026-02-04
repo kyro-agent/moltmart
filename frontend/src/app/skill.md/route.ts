@@ -5,10 +5,15 @@ import path from 'path';
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
+  // Check multiple headers - proxies may modify 'host'
   const host = request.headers.get('host') || '';
-  const isTestnet = host.includes('testnet');
+  const forwardedHost = request.headers.get('x-forwarded-host') || '';
+  const url = request.url || '';
   
-  // Serve the appropriate static file based on host
+  const isTestnet = host.includes('testnet') || 
+                    forwardedHost.includes('testnet') || 
+                    url.includes('testnet');
+  
   const filename = isTestnet ? 'skill-testnet.md' : 'skill.md';
   const filePath = path.join(process.cwd(), 'public', filename);
   const content = fs.readFileSync(filePath, 'utf-8');
