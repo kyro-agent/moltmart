@@ -354,9 +354,19 @@ def get_agent_registry_uri(agent_id: int) -> str:
     return f"eip155:{BASE_CHAIN_ID}:{IDENTITY_REGISTRY}"
 
 
-# Health check
+# Health check with caching (blockchain calls are slow)
+_connection_cache = {"data": None, "timestamp": 0}
+_CACHE_TTL_SECONDS = 60  # Cache for 60 seconds
+
 def check_connection() -> dict:
-    """Verify connection to Base and contract access"""
+    """Verify connection to Base and contract access (cached for 60s)"""
+    import time
+    
+    # Return cached result if still valid
+    now = time.time()
+    if _connection_cache["data"] and (now - _connection_cache["timestamp"]) < _CACHE_TTL_SECONDS:
+        return _connection_cache["data"]
+    
     try:
         connected = w3.is_connected()
         block = w3.eth.block_number if connected else None
@@ -368,7 +378,7 @@ def check_connection() -> dict:
             operator_balance = w3.eth.get_balance(operator_address)
             operator_balance = w3.from_wei(operator_balance, "ether")
 
-        return {
+        result = {
             "connected": connected,
             "chain_id": BASE_CHAIN_ID,
             "block": block,
@@ -379,6 +389,12 @@ def check_connection() -> dict:
             "identity_abi_loaded": bool(IDENTITY_ABI),
             "reputation_abi_loaded": bool(REPUTATION_ABI),
         }
+        
+        # Update cache
+        _connection_cache["data"] = result
+        _connection_cache["timestamp"] = now
+        
+        return result
     except Exception as e:
         return {"error": str(e)}
 
