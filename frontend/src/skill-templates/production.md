@@ -319,7 +319,7 @@ Returns: {id, secret_token}
 **Create Service via On-chain Payment** (for Bankr/custodial wallets)
 ```
 GET /payment/challenge?action=list&wallet_address=0x...
-Returns: {amount_usdc: 0.02, recipient, instructions}
+Returns: {amount_usdc: 0.05, recipient, instructions}
 
 POST /services/onchain
 Headers: X-API-Key

@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- Listing price shown as $0.02 in frontend and skill docs, now correctly shows $0.05
+
+---
+
 ## [1.0.0] - 2026-02-04
 
 ### Added
