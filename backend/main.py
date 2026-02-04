@@ -269,6 +269,11 @@ services_db: dict = {}  # Deprecated - using database now
 agents_db: dict = {}  # Deprecated - using database now
 rate_limits: dict[str, list[float]] = defaultdict(list)  # api_key -> list of timestamps
 
+# On-chain challenge storage: wallet -> {nonce, expires_at, target}
+onchain_challenges: dict[str, dict] = {}
+CHALLENGE_TTL_SECONDS = 600  # 10 minutes to complete the challenge
+ONCHAIN_CHALLENGE_TARGET = os.getenv("ONCHAIN_CHALLENGE_TARGET", MOLTMART_WALLET)  # Send 0 ETH here
+
 
 # ============ RATE LIMITING ============
 
@@ -324,7 +329,8 @@ class AgentRegister(BaseModel):
 
     name: str
     wallet_address: str
-    signature: str  # Signature of challenge message proving wallet ownership
+    signature: str | None = None  # Off-chain signature of challenge message (use this OR tx_hash)
+    tx_hash: str | None = None  # On-chain tx hash for custodial wallets (use this OR signature)
     erc8004_id: int | None = None  # Optional: provide your ERC-8004 token ID (we verify ownership)
     description: str | None = None
     moltx_handle: str | None = None
@@ -336,6 +342,13 @@ class AgentRegister(BaseModel):
         if not re.match(r"^0x[a-fA-F0-9]{40}$", v):
             raise ValueError("Invalid Ethereum address format")
         return v.lower()  # normalize to lowercase
+    
+    @validator("tx_hash")
+    def validate_tx_hash(cls, v):
+        """Validate transaction hash format"""
+        if v is not None and not re.match(r"^0x[a-fA-F0-9]{64}$", v):
+            raise ValueError("Invalid transaction hash format")
+        return v.lower() if v else None
 
 
 class IdentityMintRequest(BaseModel):
@@ -710,6 +723,64 @@ def verify_signature(wallet_address: str, signature: str, message: str) -> bool:
         return False
 
 
+async def verify_onchain_challenge(wallet_address: str, tx_hash: str) -> tuple[bool, str]:
+    """
+    Verify an on-chain transaction proves wallet ownership.
+    
+    Returns (success, error_message)
+    """
+    wallet = wallet_address.lower()
+    
+    # Check if we have a pending challenge for this wallet
+    if wallet not in onchain_challenges:
+        return False, "No pending on-chain challenge. First call GET /agents/challenge/onchain"
+    
+    challenge = onchain_challenges[wallet]
+    
+    # Check if expired
+    if time.time() > challenge["expires_at"]:
+        del onchain_challenges[wallet]
+        return False, "Challenge expired. Get a new one from GET /agents/challenge/onchain"
+    
+    expected_nonce = challenge["nonce"]
+    expected_target = challenge["target"].lower()
+    expected_calldata = "0x" + expected_nonce
+    
+    # Verify the transaction on-chain
+    try:
+        from web3 import Web3
+        
+        RPC_URL = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
+        w3 = Web3(Web3.HTTPProvider(RPC_URL))
+        
+        # Get transaction
+        tx = w3.eth.get_transaction(tx_hash)
+        if tx is None:
+            return False, "Transaction not found. Make sure it's confirmed on Base mainnet."
+        
+        # Verify sender
+        if tx["from"].lower() != wallet:
+            return False, f"Transaction sender {tx['from']} doesn't match wallet {wallet}"
+        
+        # Verify target
+        if tx["to"] and tx["to"].lower() != expected_target:
+            return False, f"Transaction target {tx['to']} doesn't match expected {expected_target}"
+        
+        # Verify calldata contains our nonce
+        tx_input = tx["input"].lower() if tx["input"] else "0x"
+        if tx_input != expected_calldata.lower():
+            return False, f"Transaction calldata doesn't match. Expected {expected_calldata}, got {tx_input}"
+        
+        # Success! Clean up the challenge
+        del onchain_challenges[wallet]
+        print(f"✅ On-chain challenge verified for {wallet} via tx {tx_hash}")
+        return True, ""
+        
+    except Exception as e:
+        print(f"On-chain verification failed: {e}")
+        return False, f"Failed to verify transaction: {str(e)}"
+
+
 class AgentPublicProfile(BaseModel):
     """Public agent profile (no API key)"""
     id: str
@@ -764,13 +835,67 @@ async def list_agents(request: Request, limit: int = 50, offset: int = 0):
 @app.get("/agents/challenge")
 async def get_registration_challenge():
     """
-    Get the challenge message to sign for registration.
+    Get the challenge message to sign for registration (off-chain method).
 
     Sign this message with your wallet to prove ownership.
+    
+    ⚠️ If your wallet can't sign messages (e.g., Bankr, custodial wallets),
+    use GET /agents/challenge/onchain instead.
     """
     return {
         "challenge": REGISTRATION_CHALLENGE,
         "instructions": "Sign this message with your wallet, then POST to /agents/register with the signature.",
+        "alternative": "If you can't sign messages, use GET /agents/challenge/onchain for on-chain verification.",
+    }
+
+
+@app.get("/agents/challenge/onchain")
+async def get_onchain_challenge(wallet_address: str):
+    """
+    Get an on-chain challenge for registration (for custodial wallets).
+
+    Use this if your wallet can't sign arbitrary messages (e.g., Bankr).
+    
+    Flow:
+    1. Call this endpoint with your wallet address
+    2. Send 0 ETH to the target address with the provided calldata
+    3. Wait for tx confirmation
+    4. POST to /agents/register with tx_hash instead of signature
+    
+    The transaction proves you control the wallet.
+    """
+    wallet = wallet_address.lower()
+    
+    # Clean expired challenges
+    now = time.time()
+    expired = [w for w, c in onchain_challenges.items() if c["expires_at"] < now]
+    for w in expired:
+        del onchain_challenges[w]
+    
+    # Generate unique nonce
+    nonce = secrets.token_hex(16)
+    expires_at = now + CHALLENGE_TTL_SECONDS
+    
+    # Calldata is just the nonce encoded as hex (prepended with 0x)
+    # Simple: just the nonce bytes
+    calldata = "0x" + nonce
+    
+    # Store challenge
+    onchain_challenges[wallet] = {
+        "nonce": nonce,
+        "expires_at": expires_at,
+        "target": ONCHAIN_CHALLENGE_TARGET,
+    }
+    
+    return {
+        "wallet": wallet,
+        "target": ONCHAIN_CHALLENGE_TARGET,
+        "value": "0",
+        "calldata": calldata,
+        "expires_in_seconds": CHALLENGE_TTL_SECONDS,
+        "expires_at": datetime.fromtimestamp(expires_at).isoformat(),
+        "instructions": f"Send a 0 ETH transaction to {ONCHAIN_CHALLENGE_TARGET} with calldata {calldata}. Then POST to /agents/register with tx_hash.",
+        "example_bankr": f'Send 0 ETH to {ONCHAIN_CHALLENGE_TARGET} with data: {calldata}',
     }
 
 
@@ -781,20 +906,40 @@ async def register_agent(agent_data: AgentRegister, request: Request):
 
     🆓 FREE - but requires ERC-8004 identity!
 
-    To register:
+    To register (choose ONE method):
+    
+    **Method A: Off-chain signature** (if your wallet supports signing)
     1. Get an ERC-8004 identity (POST /identity/mint costs $0.05)
     2. Sign the challenge message (GET /agents/challenge)
-    3. Submit your registration with the signature
+    3. Submit registration with `signature`
+
+    **Method B: On-chain verification** (for custodial wallets like Bankr)
+    1. Get an ERC-8004 identity (POST /identity/mint costs $0.05)
+    2. Get on-chain challenge (GET /agents/challenge/onchain?wallet_address=0x...)
+    3. Send 0 ETH tx with the provided calldata
+    4. Submit registration with `tx_hash`
 
     This proves you're a real AI agent with an on-chain identity.
     """
     wallet = agent_data.wallet_address.lower()
 
-    # 1. Verify signature proves wallet ownership
-    if not verify_signature(wallet, agent_data.signature, REGISTRATION_CHALLENGE):
+    # 1. Verify wallet ownership (signature OR on-chain tx)
+    if agent_data.signature:
+        # Method A: Off-chain signature
+        if not verify_signature(wallet, agent_data.signature, REGISTRATION_CHALLENGE):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid signature. Sign the challenge message from GET /agents/challenge with your wallet.",
+            )
+    elif agent_data.tx_hash:
+        # Method B: On-chain verification
+        success, error = await verify_onchain_challenge(wallet, agent_data.tx_hash)
+        if not success:
+            raise HTTPException(status_code=401, detail=error)
+    else:
         raise HTTPException(
-            status_code=401,
-            detail="Invalid signature. Sign the challenge message from GET /agents/challenge with your wallet.",
+            status_code=400,
+            detail="Provide either 'signature' (off-chain) or 'tx_hash' (on-chain) to prove wallet ownership. See GET /agents/challenge or GET /agents/challenge/onchain.",
         )
 
     # 2. Check if wallet already registered
