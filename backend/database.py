@@ -448,3 +448,21 @@ async def get_recent_mints(limit: int = 10) -> list[MintCostDB]:
             .limit(limit)
         )
         return list(result.scalars().all())
+
+
+async def get_token_id_from_mint_cache(wallet_address: str) -> int | None:
+    """
+    Fast lookup of ERC-8004 token ID from our mint cache.
+    
+    This is MUCH faster than querying blockchain events.
+    Only works for tokens we minted, but that's most of them.
+    """
+    async with get_session() as session:
+        result = await session.execute(
+            select(MintCostDB.agent_id)
+            .where(MintCostDB.recipient_wallet == wallet_address.lower())
+            .where(MintCostDB.agent_id.isnot(None))
+            .order_by(MintCostDB.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()

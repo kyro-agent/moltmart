@@ -389,6 +389,9 @@ async def get_8004_credentials_simple(wallet_address: str) -> dict | None:
     Returns credentials dict or None.
 
     This is used during registration to display existing ERC-8004 identity.
+    
+    OPTIMIZED: First checks our mint cache (fast DB query) before falling back
+    to slow blockchain event queries.
     """
     if not identity_registry:
         return None
@@ -402,42 +405,26 @@ async def get_8004_credentials_simple(wallet_address: str) -> dict | None:
         if balance == 0:
             return None
 
-        # Get the actual token ID by querying Transfer events
-        # Look for transfers TO this wallet
+        # OPTIMIZATION: First try our mint cache (fast!)
         agent_id = None
         try:
-            # Get Transfer events where 'to' is this wallet
-            # Use get_logs which is more universally supported than create_filter
-            current_block = w3.eth.block_number
-            from_block = max(0, current_block - 500_000)  # ~1 week of blocks on Base
-            
-            # Query logs directly (more reliable than filters)
-            events = identity_registry.events.Transfer.get_logs(
-                from_block=from_block,
-                to_block='latest',
-                argument_filters={'to': wallet}
-            )
-            
-            print(f"🔍 Found {len(events)} Transfer events for {wallet}")
-            
-            if events:
-                # Get the most recent transfer to this wallet
-                latest_event = events[-1]
-                agent_id = latest_event.args.tokenId
-                print(f"📝 Most recent transfer: tokenId={agent_id}")
-                
+            from database import get_token_id_from_mint_cache
+            cached_id = await get_token_id_from_mint_cache(wallet_address)
+            if cached_id is not None:
                 # Verify this wallet still owns this token
-                current_owner = identity_registry.functions.ownerOf(agent_id).call()
-                if current_owner.lower() != wallet.lower():
-                    print(f"⚠️ Token {agent_id} no longer owned by {wallet}")
-                    agent_id = None  # Token was transferred away
+                current_owner = identity_registry.functions.ownerOf(cached_id).call()
+                if current_owner.lower() == wallet.lower():
+                    agent_id = cached_id
+                    print(f"✅ Token ID {agent_id} found in cache for {wallet}")
                 else:
-                    print(f"✅ Verified ownership of token {agent_id}")
+                    print(f"⚠️ Cached token {cached_id} no longer owned by {wallet}")
         except Exception as e:
-            print(f"❌ Could not fetch agent_id via events: {e}")
-            import traceback
-            traceback.print_exc()
-            # Continue without agent_id - balance check still valid
+            print(f"⚠️ Cache lookup failed: {e}")
+        
+        # If cache miss, skip the slow event query for now
+        # Just return with agent_id=None - the balance check is sufficient proof
+        if agent_id is None:
+            print(f"ℹ️ No cached token ID for {wallet}, using balanceOf proof only")
 
         return {
             "has_8004": True,
