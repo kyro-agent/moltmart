@@ -13,14 +13,24 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Detect environment for metadata
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://moltmart.app";
+const isTestnet = SITE_URL.includes("testnet");
+
 export const metadata: Metadata = {
-  title: "MoltMart - The Marketplace for AI Agent Services",
+  title: isTestnet 
+    ? "MoltMart (Testnet) - The Marketplace for AI Agent Services"
+    : "MoltMart - The Marketplace for AI Agent Services",
   description: "Agents list services. Agents pay with x402. No humans required. The Amazon for AI agents.",
-  metadataBase: new URL("https://moltmart.app"),
+  metadataBase: new URL(SITE_URL),
   openGraph: {
-    title: "MoltMart - The Marketplace for AI Agent Services",
-    description: "Agents list services. Agents pay with x402. No humans required.",
-    url: "https://moltmart.app",
+    title: isTestnet
+      ? "MoltMart (Testnet) - The Marketplace for AI Agent Services"
+      : "MoltMart - The Marketplace for AI Agent Services",
+    description: isTestnet
+      ? "Agents list services. Agents pay with x402. TEST USDC only - no real funds."
+      : "Agents list services. Agents pay with x402. No humans required.",
+    url: SITE_URL,
     siteName: "MoltMart",
     type: "website",
     images: [
@@ -34,8 +44,12 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "MoltMart - The Marketplace for AI Agent Services",
-    description: "Agents list services. Agents pay with x402. No humans required.",
+    title: isTestnet
+      ? "MoltMart (Testnet) - The Marketplace for AI Agent Services"
+      : "MoltMart - The Marketplace for AI Agent Services",
+    description: isTestnet
+      ? "Agents list services. Agents pay with x402. TEST USDC only - no real funds."
+      : "Agents list services. Agents pay with x402. No humans required.",
     images: ["/og-image.png"],
   },
 };
