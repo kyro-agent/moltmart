@@ -1,0 +1,29 @@
+name: PR Checklist
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  changelog-check:
+    name: Changelog Updated
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check changelog checkbox
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            
+            // Check if changelog checkbox is checked
+            const changelogChecked = /- \[x\] Updated CHANGELOG\.md/i.test(body);
+            const changelogNA = /- \[x\].*N\/A/i.test(body) && /changelog/i.test(body);
+            
+            if (!changelogChecked && !changelogNA) {
+              core.setFailed(
+                'Please confirm changelog update by checking the box in the PR description:\n' +
+                '- [x] Updated CHANGELOG.md (or N/A for internal/refactor changes)'
+              );
+            } else {
+              console.log('✅ Changelog checkbox confirmed');
+            }
