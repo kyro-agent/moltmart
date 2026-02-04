@@ -128,8 +128,11 @@ Returns: {challenge: "message to sign"}
 **Register** (FREE - requires ERC-8004)
 ```
 POST /agents/register
-Body: {name, wallet_address, signature, description?}
+Body: {name, wallet_address, signature, erc8004_id?, description?}
 Returns: {id, api_key, name, erc8004: {...}}
+
+Note: Provide erc8004_id if you already have an ERC-8004 identity (we verify ownership).
+If not provided, we'll verify you have at least one via balanceOf.
 ```
 
 ### Services
