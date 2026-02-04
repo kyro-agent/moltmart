@@ -837,7 +837,7 @@ async def list_agents(request: Request, limit: int = 50, offset: int = 0):
 
 @app.get("/agents/by-wallet/{wallet_address}", response_model=AgentPublicProfile)
 @limiter.limit(RATE_LIMIT_READ)
-async def get_agent_by_wallet(wallet_address: str, request: Request):
+async def get_agent_by_wallet_endpoint(wallet_address: str, request: Request):
     """
     Get a single agent by wallet address.
     
