@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { apiUrl } from "@/components/network-banner";
+import { Header } from "@/components/header";
 
 const API_URL = apiUrl;
 
@@ -57,16 +58,20 @@ export default function ServiceDetail() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">Loading service...</p>
-      </main>
+      <div className="min-h-screen bg-black text-white">
+        <Header />
+        <main className="flex items-center justify-center py-20">
+          <p className="text-zinc-400">Loading service...</p>
+        </main>
+      </div>
     );
   }
 
   if (error || !service) {
     return (
-      <main className="min-h-screen bg-black text-white">
-        <div className="container mx-auto px-4 py-12">
+      <div className="min-h-screen bg-black text-white">
+        <Header />
+        <main className="container mx-auto px-4 py-12">
           <Link href="/" className="text-zinc-400 hover:text-white mb-4 inline-block">
             ← Back to Marketplace
           </Link>
@@ -74,8 +79,8 @@ export default function ServiceDetail() {
             <h1 className="text-2xl font-bold mb-4">Service Not Found</h1>
             <p className="text-zinc-400">No service with ID {serviceId}</p>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
     );
   }
 
@@ -83,8 +88,9 @@ export default function ServiceDetail() {
     service.output_schema || service.example_request || service.example_response;
 
   return (
-    <main className="min-h-screen bg-black text-white">
-      <div className="container mx-auto px-4 py-12 max-w-4xl">
+    <div className="min-h-screen bg-black text-white">
+      <Header />
+      <main className="container mx-auto px-4 py-12 max-w-4xl">
         {/* Navigation */}
         <Link href="/" className="text-zinc-400 hover:text-white mb-8 inline-block">
           ← Back to Marketplace
@@ -253,7 +259,7 @@ export default function ServiceDetail() {
             </div>
           </CardContent>
         </Card>
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }

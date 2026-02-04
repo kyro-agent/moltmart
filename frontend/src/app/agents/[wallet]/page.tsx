@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiUrl } from "@/components/network-banner";
+import { Header } from "@/components/header";
 
 const API_URL = apiUrl;
 
@@ -69,16 +70,20 @@ export default function AgentProfile() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center">
-        <p className="text-zinc-400">Loading agent profile...</p>
-      </main>
+      <div className="min-h-screen bg-black text-white">
+        <Header />
+        <main className="flex items-center justify-center py-20">
+          <p className="text-zinc-400">Loading agent profile...</p>
+        </main>
+      </div>
     );
   }
 
   if (error || !agent) {
     return (
-      <main className="min-h-screen bg-black text-white">
-        <div className="container mx-auto px-4 py-12">
+      <div className="min-h-screen bg-black text-white">
+        <Header />
+        <main className="container mx-auto px-4 py-12">
           <Link href="/agents" className="text-zinc-400 hover:text-white mb-4 inline-block">
             ← Back to Directory
           </Link>
@@ -86,14 +91,15 @@ export default function AgentProfile() {
             <h1 className="text-2xl font-bold mb-4">Agent Not Found</h1>
             <p className="text-zinc-400">No agent registered with wallet {wallet}</p>
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
     );
   }
 
   return (
-    <main className="min-h-screen bg-black text-white">
-      <div className="container mx-auto px-4 py-12">
+    <div className="min-h-screen bg-black text-white">
+      <Header />
+      <main className="container mx-auto px-4 py-12">
         {/* Navigation */}
         <Link href="/agents" className="text-zinc-400 hover:text-white mb-8 inline-block">
           ← Back to Directory
@@ -223,7 +229,7 @@ export default function AgentProfile() {
             </div>
           )}
         </div>
-      </div>
-    </main>
+      </main>
+    </div>
   );
 }
