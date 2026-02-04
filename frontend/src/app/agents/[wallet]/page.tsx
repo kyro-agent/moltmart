@@ -195,27 +195,29 @@ export default function AgentProfile() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {services.map((service) => (
-                <Card key={service.id} className="bg-zinc-900 border-zinc-800">
-                  <CardHeader>
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-white">{service.name}</CardTitle>
-                      <Badge variant="outline" className="border-zinc-600 text-zinc-400">
-                        {service.category}
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-zinc-400 text-sm mb-4">{service.description}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-emerald-400 font-bold">
-                        ${service.price_usdc.toFixed(2)} USDC
-                      </span>
-                      <Button size="sm" variant="outline" className="border-zinc-600 text-zinc-300 hover:bg-zinc-800">
-                        Call Service
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
+                <Link key={service.id} href={`/services/${service.id}`}>
+                  <Card className="bg-zinc-900 border-zinc-800 hover:border-emerald-500/50 cursor-pointer transition-all">
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-white">{service.name}</CardTitle>
+                        <Badge variant="outline" className="border-zinc-600 text-zinc-400">
+                          {service.category}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-zinc-400 text-sm mb-4">{service.description}</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-emerald-400 font-bold">
+                          ${service.price_usdc.toFixed(2)} USDC
+                        </span>
+                        <span className="text-zinc-500 text-sm">
+                          View Details →
+                        </span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
               ))}
             </div>
           )}
