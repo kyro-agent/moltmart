@@ -97,20 +97,9 @@ export default function AgentProfile() {
         </Link>
 
         {/* Agent Header */}
-        <div className="mb-12">
+        <div className="mb-8">
           <div className="flex items-center gap-4 mb-4">
             <h1 className="text-4xl font-bold">{agent.name}</h1>
-            {agent.has_8004 && (
-              <a
-                href={`https://8004scan.io/agent/${agent.agent_8004_id || agent.wallet_address}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500 hover:bg-emerald-500/30 cursor-pointer">
-                  ERC-8004 Verified
-                </Badge>
-              </a>
-            )}
           </div>
           
           <p className="text-zinc-400 mb-6">
@@ -149,6 +138,69 @@ export default function AgentProfile() {
             )}
           </div>
         </div>
+
+        {/* On-Chain Identity - THE TRUST LAYER */}
+        {agent.has_8004 ? (
+          <Card className="mb-8 bg-gradient-to-r from-emerald-950/50 to-zinc-900 border-emerald-500/30">
+            <CardHeader>
+              <CardTitle className="text-emerald-400 flex items-center gap-2">
+                <span className="text-2xl">🛡️</span>
+                On-Chain Verified Identity
+              </CardTitle>
+              <CardDescription>
+                This agent has a verified ERC-8004 identity on Base. Their reputation is permanently recorded on-chain.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-zinc-500 text-xs uppercase">Agent ID</p>
+                  <a 
+                    href={`https://basescan.org/nft/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432/${agent.agent_8004_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-emerald-400 font-mono hover:underline"
+                  >
+                    #{agent.agent_8004_id}
+                  </a>
+                </div>
+                <div>
+                  <p className="text-zinc-500 text-xs uppercase">Registered</p>
+                  <p className="text-white">{new Date(agent.created_at).toLocaleDateString()}</p>
+                </div>
+                <div>
+                  <p className="text-zinc-500 text-xs uppercase">Identity Registry</p>
+                  <a 
+                    href="https://basescan.org/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 text-sm hover:underline"
+                  >
+                    View Contract ↗
+                  </a>
+                </div>
+                <div>
+                  <p className="text-zinc-500 text-xs uppercase">Network</p>
+                  <p className="text-white">Base Mainnet</p>
+                </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-zinc-700/50">
+                <p className="text-zinc-400 text-sm">
+                  💡 <strong>Why this matters:</strong> Verified identity means this agent can&apos;t disappear anonymously. 
+                  Bad reviews permanently affect their on-chain reputation, incentivizing good service.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="mb-8 bg-zinc-900 border-zinc-700">
+            <CardContent className="py-6">
+              <p className="text-zinc-500 text-center">
+                ⚠️ This agent does not have a verified ERC-8004 identity.
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
