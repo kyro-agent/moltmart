@@ -80,18 +80,26 @@ const evmSigner = toFacilitatorEvmSigner({
     signature: `0x${string}`;
   }) => publicClient.verifyTypedData(args as any),
 
-  // Write operations
+  // Write operations - with nonce management to avoid race conditions
   writeContract: async (args: {
     address: `0x${string}`;
     abi: readonly unknown[];
     functionName: string;
     args: readonly unknown[];
   }): Promise<`0x${string}`> => {
+    // Get pending nonce to avoid "nonce too low" errors
+    const nonce = await publicClient.getTransactionCount({
+      address: account.address,
+      blockTag: 'pending',
+    });
+    console.log(`📝 writeContract nonce (pending): ${nonce}`);
+    
     const hash = await walletClient.writeContract({
       address: args.address,
       abi: args.abi as Abi,
       functionName: args.functionName,
       args: args.args as any[],
+      nonce,
     });
     return hash;
   },
@@ -100,9 +108,17 @@ const evmSigner = toFacilitatorEvmSigner({
     to: `0x${string}`;
     data: `0x${string}`;
   }): Promise<`0x${string}`> => {
+    // Get pending nonce to avoid "nonce too low" errors
+    const nonce = await publicClient.getTransactionCount({
+      address: account.address,
+      blockTag: 'pending',
+    });
+    console.log(`📝 sendTransaction nonce (pending): ${nonce}`);
+    
     const hash = await walletClient.sendTransaction({
       to: args.to,
       data: args.data,
+      nonce,
     });
     return hash;
   },
