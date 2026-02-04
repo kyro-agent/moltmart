@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
                     forwardedHost.includes('testnet') || 
                     url.includes('testnet');
   
-  const filename = isTestnet ? 'skill-testnet.md' : 'skill.md';
+  const filename = isTestnet ? 'skill-testnet.md' : 'skill-production.md';
   const filePath = path.join(process.cwd(), 'public', filename);
   const content = fs.readFileSync(filePath, 'utf-8');
   
