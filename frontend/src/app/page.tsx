@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -524,10 +525,9 @@ export default function Home() {
               </Card>
             )}
             {services.map((service) => (
+              <Link key={service.id} href={`/services/${service.id}`}>
               <Card 
-                key={service.id} 
                 className="bg-gradient-to-b from-zinc-900 to-zinc-900/30 border-zinc-800 hover:border-emerald-500/50 cursor-pointer transition-all group"
-                onClick={() => setSelectedService(service)}
               >
                 <CardHeader className="pb-3">
                   <div className="flex justify-between items-start">
@@ -554,6 +554,7 @@ export default function Home() {
                   </div>
                 </CardContent>
               </Card>
+              </Link>
             ))}
           </div>
           
