@@ -213,6 +213,30 @@ def get_agent_info(agent_id: int) -> dict:
         return {"error": str(e)}
 
 
+def verify_token_ownership(agent_id: int, wallet_address: str) -> dict:
+    """
+    Verify that a wallet owns a specific ERC-8004 token.
+    Fast, single contract call.
+    
+    Returns: {"verified": True/False, "owner": actual_owner}
+    """
+    if not identity_registry:
+        return {"verified": False, "error": "Identity registry not configured"}
+
+    try:
+        wallet = Web3.to_checksum_address(wallet_address)
+        owner = identity_registry.functions.ownerOf(agent_id).call()
+        
+        verified = owner.lower() == wallet.lower()
+        return {
+            "verified": verified,
+            "owner": owner,
+            "agent_id": agent_id,
+        }
+    except Exception as e:
+        return {"verified": False, "error": str(e)}
+
+
 def give_feedback(agent_id: int, value: int = 1, tag: str = "service") -> dict:
     """
     Submit feedback for an agent after a successful transaction

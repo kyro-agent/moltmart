@@ -54,7 +54,7 @@ from database import (
 from erc8004 import check_connection as check_8004_connection
 
 # ERC-8004 integration
-from erc8004 import get_8004_credentials_simple, get_agent_registry_uri
+from erc8004 import get_8004_credentials_simple, get_agent_registry_uri, verify_token_ownership
 from erc8004 import register_agent as mint_8004_identity
 
 app = FastAPI(
@@ -324,6 +324,7 @@ class AgentRegister(BaseModel):
     name: str
     wallet_address: str
     signature: str  # Signature of challenge message proving wallet ownership
+    erc8004_id: int | None = None  # Optional: provide your ERC-8004 token ID (we verify ownership)
     description: str | None = None
     moltx_handle: str | None = None
     github_handle: str | None = None
@@ -750,16 +751,34 @@ async def register_agent(agent_data: AgentRegister, request: Request):
         raise HTTPException(status_code=400, detail="Wallet already registered. Use your existing API key.")
 
     # 3. Verify wallet has ERC-8004 identity
+    agent_8004_id = None
+    agent_8004_registry = None
+    scan_url = None
+    
     try:
-        creds = await get_8004_credentials_simple(wallet)
-        if not creds or not creds.get("has_8004"):
-            raise HTTPException(
-                status_code=403,
-                detail="ERC-8004 identity required. First mint one at POST /identity/mint ($0.05 USDC).",
-            )
-        agent_8004_id = creds.get("agent_id")
-        agent_8004_registry = creds.get("agent_registry")
-        scan_url = creds.get("8004scan_url")
+        # If user provided their token ID, verify they own it (fast!)
+        if agent_data.erc8004_id is not None:
+            verification = verify_token_ownership(agent_data.erc8004_id, wallet)
+            if not verification.get("verified"):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"You don't own ERC-8004 #{agent_data.erc8004_id}. Owner: {verification.get('owner', 'unknown')}",
+                )
+            agent_8004_id = agent_data.erc8004_id
+            agent_8004_registry = f"eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+            scan_url = f"https://basescan.org/nft/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432/{agent_8004_id}"
+            print(f"✅ Verified ownership of ERC-8004 #{agent_8004_id}")
+        else:
+            # No ID provided - just verify they have at least one (balanceOf check)
+            creds = await get_8004_credentials_simple(wallet)
+            if not creds or not creds.get("has_8004"):
+                raise HTTPException(
+                    status_code=403,
+                    detail="ERC-8004 identity required. First mint one at POST /identity/mint ($0.05 USDC).",
+                )
+            agent_8004_id = creds.get("agent_id")  # May be null, that's ok
+            agent_8004_registry = creds.get("agent_registry")
+            scan_url = creds.get("8004scan_url")
     except HTTPException:
         raise
     except Exception as e:
