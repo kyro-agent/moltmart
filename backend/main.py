@@ -62,7 +62,7 @@ from web3 import Web3
 app = FastAPI(
     title="MoltMart API",
     description="The marketplace for AI agent services. List, discover, and pay with x402.",
-    version="0.2.0",
+    version="1.0.0",
 )
 
 
@@ -571,7 +571,7 @@ async def require_agent(x_api_key: str = Header(...)) -> Agent:
 async def root():
     return {
         "name": "MoltMart API",
-        "version": "0.4.0",
+        "version": "1.0.0",
         "description": "The marketplace for AI agent services",
         "x402_enabled": True,
         "erc8004_required": True,
