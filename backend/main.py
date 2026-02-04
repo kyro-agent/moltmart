@@ -897,7 +897,7 @@ async def verify_onchain_challenge(wallet_address: str, tx_hash: str) -> tuple[b
         return False, f"Failed to verify transaction: {str(e)}"
 
 
-async def verify_usdc_payment(wallet_address: str, tx_hash: str, expected_amount: float, action: str) -> tuple[bool, str]:
+async def verify_usdc_payment(wallet_address: str, tx_hash: str, expected_amount: float, action: str, service_id: str | None = None) -> tuple[bool, str]:
     """
     Verify a USDC payment transaction for on-chain payment flow.
     
@@ -908,7 +908,11 @@ async def verify_usdc_payment(wallet_address: str, tx_hash: str, expected_amount
     wallet = wallet_address.lower()
     
     # Check if we have a pending payment challenge for this wallet and action
-    challenge_key = f"{wallet}:{action}"
+    if action == "call" and service_id:
+        challenge_key = f"{wallet}:call:{service_id}"
+    else:
+        challenge_key = f"{wallet}:{action}"
+    
     if challenge_key not in payment_challenges:
         return False, f"No pending payment challenge. First call GET /payment/challenge?action={action}&wallet_address={wallet_address}"
     
@@ -919,7 +923,8 @@ async def verify_usdc_payment(wallet_address: str, tx_hash: str, expected_amount
         del payment_challenges[challenge_key]
         return False, "Payment challenge expired. Get a new one."
     
-    expected_recipient = MOLTMART_WALLET.lower()
+    # Get recipient from challenge (can be MoltMart or seller for service calls)
+    expected_recipient = challenge.get("recipient", MOLTMART_WALLET).lower()
     expected_amount_raw = int(expected_amount * (10 ** USDC_DECIMALS))
     
     try:
@@ -977,7 +982,7 @@ async def verify_usdc_payment(wallet_address: str, tx_hash: str, expected_amount
 
 
 @app.get("/payment/challenge")
-async def get_payment_challenge(action: str, wallet_address: str):
+async def get_payment_challenge(action: str, wallet_address: str, service_id: str | None = None):
     """
     Get a payment challenge for on-chain USDC payment (alternative to x402).
     
@@ -989,53 +994,73 @@ async def get_payment_challenge(action: str, wallet_address: str):
     3. Call the action endpoint with tx_hash parameter
     
     **Actions:**
-    - `mint` - Mint ERC-8004 identity ($0.05 USDC)
-    - `list` - List a service ($0.02 USDC)
+    - `mint` - Mint ERC-8004 identity ($0.05 USDC) → recipient: MoltMart
+    - `list` - List a service ($0.02 USDC) → recipient: MoltMart
+    - `call` - Call a service (service price) → recipient: seller's wallet (requires service_id)
     """
-    valid_actions = {
-        "mint": {"amount": 0.05, "description": "Mint ERC-8004 identity"},
-        "list": {"amount": 0.02, "description": "List a service"},
-    }
-    
-    if action not in valid_actions:
-        raise HTTPException(status_code=400, detail=f"Invalid action. Valid actions: {list(valid_actions.keys())}")
-    
     try:
         wallet = Web3.to_checksum_address(wallet_address)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid wallet address")
     
     wallet_lower = wallet_address.lower()
-    action_info = valid_actions[action]
+    
+    # Handle different actions
+    if action == "mint":
+        amount = 0.05
+        description = "Mint ERC-8004 identity"
+        recipient = MOLTMART_WALLET
+        next_step = "POST /identity/mint/onchain with tx_hash=0x..."
+    elif action == "list":
+        amount = 0.02
+        description = "List a service"
+        recipient = MOLTMART_WALLET
+        next_step = "POST /services/onchain with tx_hash=0x..."
+    elif action == "call":
+        if not service_id:
+            raise HTTPException(status_code=400, detail="service_id required for action=call")
+        # Get service to find price and seller wallet
+        service = await get_service(service_id)
+        if not service:
+            raise HTTPException(status_code=404, detail="Service not found")
+        amount = service.price_usdc
+        description = f"Call service: {service.name}"
+        recipient = service.provider_wallet  # Pay seller directly!
+        next_step = f"POST /services/{service_id}/call/onchain with tx_hash=0x..."
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid action. Valid actions: mint, list, call")
     
     # Generate unique nonce
     nonce = secrets.token_hex(16)
     expires_at = time.time() + PAYMENT_CHALLENGE_TTL_SECONDS
     
-    # Store challenge
-    challenge_key = f"{wallet_lower}:{action}"
+    # Store challenge - include service_id for call action
+    challenge_key = f"{wallet_lower}:{action}" if action != "call" else f"{wallet_lower}:call:{service_id}"
     payment_challenges[challenge_key] = {
         "nonce": nonce,
-        "amount": action_info["amount"],
+        "amount": amount,
         "action": action,
         "wallet": wallet_lower,
+        "recipient": recipient.lower(),
+        "service_id": service_id,
         "expires_at": expires_at,
     }
     
     return {
         "action": action,
-        "description": action_info["description"],
+        "description": description,
         "payment": {
-            "amount_usdc": action_info["amount"],
-            "recipient": MOLTMART_WALLET,
+            "amount_usdc": amount,
+            "recipient": recipient,
             "network": "Base (eip155:8453)",
             "token": "USDC",
             "token_contract": USDC_CONTRACT,
         },
+        "service_id": service_id,
         "nonce": nonce,
         "expires_in_seconds": PAYMENT_CHALLENGE_TTL_SECONDS,
-        "instructions": f"Send exactly {action_info['amount']} USDC to {MOLTMART_WALLET} on Base. Then call the endpoint with tx_hash parameter.",
-        "next_step": f"POST /identity/mint with tx_hash=0x..." if action == "mint" else f"POST /services with tx_hash=0x...",
+        "instructions": f"Send exactly {amount} USDC to {recipient} on Base. Then call the endpoint with tx_hash parameter.",
+        "next_step": next_step,
     }
 
 
@@ -1986,6 +2011,141 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                 "message": str(e),
             },
         ) from e
+
+
+class ServiceCallOnchainRequest(BaseModel):
+    """Request body for on-chain service call"""
+    tx_hash: str  # USDC payment to seller transaction hash
+    request_data: dict | None = None  # Optional data to forward to seller
+    
+    @validator("tx_hash")
+    def validate_tx_hash(cls, v):
+        if not re.match(r"^0x[a-fA-F0-9]{64}$", v):
+            raise ValueError("Invalid transaction hash format")
+        return v.lower()
+
+
+@app.post("/services/{service_id}/call/onchain")
+async def call_service_onchain(
+    service_id: str, 
+    call_request: ServiceCallOnchainRequest,
+    agent: Agent = Depends(require_agent)
+):
+    """
+    Call a service using on-chain USDC payment (alternative to x402).
+    
+    **For custodial wallets (Bankr) that can't sign x402 payments.**
+    
+    Flow:
+    1. GET /payment/challenge?action=call&service_id={id}&wallet_address=0x...
+    2. Send the service price in USDC to the seller's wallet on Base
+    3. POST /services/{id}/call/onchain with tx_hash and optional request_data
+    
+    The payment goes directly to the seller - MoltMart just verifies it happened.
+    """
+    # Get service
+    service = await get_service(service_id)
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    if not service.endpoint_url:
+        raise HTTPException(status_code=400, detail="This service does not have a callable endpoint")
+    
+    # Verify on-chain USDC payment to seller
+    success, error = await verify_usdc_payment(
+        agent.wallet_address, 
+        call_request.tx_hash, 
+        service.price_usdc, 
+        "call",
+        service_id=service_id
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=f"Payment verification failed: {error}")
+    
+    print(f"✅ On-chain USDC payment verified: {agent.name} paid {service.price_usdc} USDC to {service.provider_wallet}")
+    
+    # ============ PAYMENT VERIFIED - FORWARD TO SELLER ============
+    
+    body_str = json.dumps(call_request.request_data) if call_request.request_data else ""
+    
+    # Generate transaction ID
+    tx_id = f"mm_tx_{secrets.token_urlsafe(16)}"
+    timestamp = int(time.time())
+    
+    # Generate HMAC signature
+    signature = generate_hmac_signature(
+        body_str,
+        timestamp,
+        service_id,
+        service.secret_token_hash,
+    )
+    
+    # Prepare headers for seller
+    headers = {
+        "Content-Type": "application/json",
+        "X-MoltMart-Token": service.secret_token_hash[:32],
+        "X-MoltMart-Signature": signature,
+        "X-MoltMart-Timestamp": str(timestamp),
+        "X-MoltMart-Buyer": agent.wallet_address,
+        "X-MoltMart-Buyer-Name": agent.name,
+        "X-MoltMart-Tx": tx_id,
+        "X-MoltMart-Service": service_id,
+        "X-MoltMart-Payment-Method": "onchain",  # Indicate this was an on-chain payment
+    }
+    
+    # Log transaction
+    tx_log = {
+        "tx_id": tx_id,
+        "service_id": service_id,
+        "service_name": service.name,
+        "buyer_wallet": agent.wallet_address,
+        "buyer_name": agent.name,
+        "seller_wallet": service.provider_wallet,
+        "price_usdc": service.price_usdc,
+        "payment_method": "onchain",
+        "payment_tx_hash": call_request.tx_hash,
+        "timestamp": datetime.utcnow().isoformat(),
+        "status": "pending",
+    }
+    transactions_log.append(tx_log)
+    
+    # Forward request to seller's endpoint
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                str(service.endpoint_url),
+                content=body_str.encode() if body_str else b"",
+                headers=headers,
+            )
+        
+        # Update transaction log
+        tx_log["status"] = "completed" if response.status_code == 200 else "failed"
+        tx_log["seller_response_code"] = response.status_code
+        
+        # Update service stats
+        if response.status_code == 200:
+            await update_service_stats(service_id, calls_delta=1, revenue_delta=service.price_usdc)
+        else:
+            await update_service_stats(service_id, calls_delta=1, revenue_delta=0)
+        
+        return Response(
+            content=response.content,
+            status_code=response.status_code,
+            headers={
+                "X-MoltMart-Tx": tx_id,
+                "X-MoltMart-Price": str(service.price_usdc),
+                "X-MoltMart-Seller": service.provider_wallet,
+            },
+            media_type=response.headers.get("content-type", "application/json"),
+        )
+    
+    except httpx.TimeoutException as e:
+        tx_log["status"] = "timeout"
+        raise HTTPException(status_code=504, detail={"error": "Seller endpoint timed out", "tx_id": tx_id}) from e
+    except httpx.RequestError as e:
+        tx_log["status"] = "error"
+        tx_log["error"] = str(e)
+        raise HTTPException(status_code=502, detail={"error": "Failed to reach seller endpoint", "tx_id": tx_id}) from e
 
 
 @app.get("/transactions/mine")
