@@ -317,6 +317,30 @@ async def get_agent_by_id(agent_id: str) -> AgentDB | None:
         return result.scalar_one_or_none()
 
 
+async def get_agent_by_8004_id(erc8004_id: int) -> AgentDB | None:
+    """Get agent by their ERC-8004 token ID."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AgentDB).where(AgentDB.agent_8004_id == erc8004_id)
+        )
+        return result.scalar_one_or_none()
+
+
+async def update_agent_8004_status(wallet: str, has_8004: bool, agent_8004_id: int | None = None, agent_8004_registry: str | None = None, scan_url: str | None = None) -> None:
+    """Update an agent's ERC-8004 verification status."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AgentDB).where(AgentDB.wallet_address == wallet.lower())
+        )
+        agent = result.scalar_one_or_none()
+        if agent:
+            agent.has_8004 = has_8004
+            agent.agent_8004_id = agent_8004_id
+            agent.agent_8004_registry = agent_8004_registry
+            agent.scan_url = scan_url
+            await session.commit()
+
+
 async def get_agents(limit: int = 50, offset: int = 0) -> list[AgentDB]:
     """Get agents with pagination, newest first."""
     import time

@@ -45,11 +45,13 @@ from database import (
     delete_agent_by_wallet,
     get_agent_by_api_key,
     get_agent_by_wallet,
+    get_agent_by_8004_id,
     get_agents,
     get_all_services,
     get_service,
     get_services,
     init_db,
+    update_agent_8004_status,
     update_service_db,
     update_service_stats,
 )
@@ -1344,7 +1346,21 @@ async def register_agent(agent_data: AgentRegister, request: Request):
         # Non-blocking - if we can't check, just register as unverified
         print(f"⚠️ Error checking ERC-8004 (non-blocking): {e}")
 
-    # 4. Create the agent
+    # 4. If this ERC-8004 is registered to another agent, revoke it (ownership transferred)
+    if has_8004 and agent_8004_id is not None:
+        existing_holder = await get_agent_by_8004_id(agent_8004_id)
+        if existing_holder and existing_holder.wallet_address.lower() != wallet:
+            # Transfer badge: revoke from old owner
+            await update_agent_8004_status(
+                wallet=existing_holder.wallet_address,
+                has_8004=False,
+                agent_8004_id=None,
+                agent_8004_registry=None,
+                scan_url=None
+            )
+            print(f"🔄 ERC-8004 #{agent_8004_id} transferred: {existing_holder.name} → {agent_data.name}")
+
+    # 5. Create the agent
     agent_id = str(uuid.uuid4())
     api_key = f"mm_{secrets.token_urlsafe(32)}"
 
