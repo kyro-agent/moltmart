@@ -39,8 +39,11 @@ from x402.server import x402ResourceServer
 from database import (
     AgentDB,
     ServiceDB,
+    TransactionDB,
+    FeedbackDB,
     count_agents,
     create_agent,
+    create_feedback,
     create_service,
     delete_agent_by_wallet,
     get_agent_by_api_key,
@@ -48,9 +51,15 @@ from database import (
     get_agent_by_8004_id,
     get_agents,
     get_all_services,
+    get_feedback_for_service,
     get_service,
+    get_service_rating_summary,
     get_services,
+    get_transactions_by_wallet,
+    has_purchased_service,
+    has_reviewed_service,
     init_db,
+    log_transaction,
     update_agent_8004_status,
     update_service_db,
     update_service_stats,
@@ -58,7 +67,7 @@ from database import (
 from erc8004 import check_connection as check_8004_connection, IDENTITY_REGISTRY, BASE_CHAIN_ID
 
 # ERC-8004 integration
-from erc8004 import get_8004_credentials_simple, get_agent_registry_uri, verify_token_ownership, get_agent_info, get_reputation
+from erc8004 import get_8004_credentials_simple, get_agent_registry_uri, verify_token_ownership, get_agent_info, get_reputation, give_feedback
 from erc8004 import register_agent as mint_8004_identity
 from web3 import Web3
 
@@ -208,7 +217,7 @@ FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://facilitator.moltmart.app
 
 # Pricing
 IDENTITY_MINT_PRICE = "$0.05"  # Pay to mint ERC-8004 identity
-LISTING_PRICE = "$0.05"  # Pay per service listing (matches Bankr minimum)
+LISTING_PRICE = "FREE"  # Service listing is free - reputation handles spam
 
 # Registration challenge message (agents sign this to prove wallet ownership)
 REGISTRATION_CHALLENGE = "MoltMart Registration: I own this wallet and have an ERC-8004 identity"
@@ -228,6 +237,7 @@ x402_server.register(NETWORK, ExactEvmServerScheme())
 print(f"📡 x402 registered for network: {NETWORK} ({'testnet' if USE_TESTNET else 'mainnet'})")
 
 # Define x402-protected routes
+# NOTE: Service listing is FREE - only identity minting requires payment
 x402_routes: dict[str, RouteConfig] = {
     "POST /identity/mint": RouteConfig(
         accepts=[
@@ -241,18 +251,7 @@ x402_routes: dict[str, RouteConfig] = {
         mime_type="application/json",
         description="Mint an ERC-8004 identity NFT ($0.05 USDC)",
     ),
-    "POST /services": RouteConfig(
-        accepts=[
-            PaymentOption(
-                scheme="exact",
-                pay_to=MOLTMART_WALLET,
-                price=LISTING_PRICE,
-                network=NETWORK,
-            ),
-        ],
-        mime_type="application/json",
-        description="List a new service on MoltMart ($0.05 USDC)",
-    ),
+    # Service listing removed from x402 - it's FREE now
 }
 
 # Add x402 payment middleware
@@ -1959,28 +1958,32 @@ async def list_categories(request: Request):
 # ============ FEEDBACK ============
 
 
-class ReputationFeedback(BaseModel):
+class ReviewRequest(BaseModel):
+    """Request to submit a review for a service."""
     service_id: str
-    rating: int
+    rating: int  # 1-5 stars
     comment: str | None = None
-    tx_hash: str | None = None  # Optional proof of transaction
 
 
-feedback_db: list = []
-
-
-@app.post("/feedback")
-async def submit_feedback(feedback: ReputationFeedback, agent: Agent = Depends(require_agent)):
+@app.post("/reviews")
+async def submit_review(review: ReviewRequest, agent: Agent = Depends(require_agent)):
     """
-    Submit feedback for a service.
+    Submit a review for a service.
 
     🔐 Requires authentication (X-API-Key header)
+    ✅ Requires VERIFIED PURCHASE - you must have bought this service
 
     Constraints:
+    - Must have purchased the service (verified in our transaction log)
     - Cannot review your own services
     - One review per service per agent
+    - Rating must be 1-5
+
+    The review is stored in our database AND submitted to ERC-8004 on-chain
+    for permanent, verifiable reputation.
     """
-    db_service = await get_service(feedback.service_id)
+    # Get service
+    db_service = await get_service(review.service_id)
     if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
 
@@ -1988,56 +1991,111 @@ async def submit_feedback(feedback: ReputationFeedback, agent: Agent = Depends(r
     if db_service.provider_wallet and db_service.provider_wallet.lower() == agent.wallet_address.lower():
         raise HTTPException(status_code=403, detail="Cannot review your own service")
 
-    if not 1 <= feedback.rating <= 5:
+    # Validate rating
+    if not 1 <= review.rating <= 5:
         raise HTTPException(status_code=400, detail="Rating must be 1-5")
 
-    # Prevent duplicate reviews (one per service per agent)
-    existing_review = next(
-        (
-            f
-            for f in feedback_db
-            if f["service_id"] == feedback.service_id and f["caller_wallet"].lower() == agent.wallet_address.lower()
-        ),
-        None,
+    # ✅ VERIFIED PURCHASE CHECK
+    has_purchased = await has_purchased_service(agent.wallet_address, review.service_id)
+    if not has_purchased:
+        raise HTTPException(
+            status_code=403,
+            detail="You must purchase this service before reviewing it. Only verified buyers can leave reviews."
+        )
+
+    # Check for duplicate review
+    already_reviewed = await has_reviewed_service(agent.id, review.service_id)
+    if already_reviewed:
+        raise HTTPException(status_code=409, detail="You have already reviewed this service")
+
+    # Create feedback record
+    feedback_id = f"fb_{secrets.token_urlsafe(16)}"
+    feedback_record = FeedbackDB(
+        id=feedback_id,
+        service_id=review.service_id,
+        agent_id=agent.id,
+        agent_name=agent.name,
+        rating=review.rating,
+        comment=review.comment,
     )
-    if existing_review:
-        raise HTTPException(status_code=409, detail="You have already reviewed this service. Update not supported yet.")
 
-    feedback_db.append(
-        {
-            "service_id": feedback.service_id,
-            "rating": feedback.rating,
-            "comment": feedback.comment,
-            "caller_wallet": agent.wallet_address,  # Use authenticated wallet, not self-reported
-            "caller_name": agent.name,
-            "tx_hash": feedback.tx_hash,
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-    )
+    # Save to database
+    await create_feedback(feedback_record)
 
-    return {"status": "submitted", "message": "Feedback recorded", "agent": agent.name}
+    # Submit to ERC-8004 on-chain (if seller has ERC-8004 identity)
+    onchain_result = None
+    if db_service.provider_wallet:
+        # Get seller's ERC-8004 agent_id
+        seller_8004 = await get_8004_credentials_simple(db_service.provider_wallet)
+        if seller_8004 and seller_8004.get("agent_id"):
+            # Convert 1-5 rating to positive/negative value
+            # 4-5 stars = positive, 1-2 = negative, 3 = neutral
+            value = review.rating - 3  # -2 to +2
+            try:
+                onchain_result = give_feedback(
+                    agent_id=seller_8004["agent_id"],
+                    value=value,
+                    tag="service"
+                )
+            except Exception as e:
+                # Log but don't fail - on-chain is bonus, not required
+                print(f"⚠️ Failed to submit on-chain feedback: {e}")
+
+    return {
+        "status": "submitted",
+        "message": "Review recorded",
+        "review_id": feedback_id,
+        "verified_purchase": True,
+        "onchain_submitted": onchain_result is not None and "error" not in onchain_result,
+        "onchain_tx": onchain_result.get("tx_hash") if onchain_result else None,
+    }
 
 
-@app.get("/services/{service_id}/reputation")
+@app.get("/services/{service_id}/reviews")
 @limiter.limit(RATE_LIMIT_READ)
-async def get_service_reputation(request: Request, service_id: str):
-    """Get reputation/feedback for a service (rate limited: 120/min)"""
+async def get_service_reviews(request: Request, service_id: str):
+    """
+    Get reviews for a service.
+    
+    Returns aggregate rating and list of verified reviews.
+    All reviews are from verified purchasers only.
+    """
     db_service = await get_service(service_id)
     if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
 
-    service_feedback = [f for f in feedback_db if f["service_id"] == service_id]
+    # Get reviews from database
+    reviews = await get_feedback_for_service(service_id)
+    
+    # Get aggregate stats
+    stats = await get_service_rating_summary(service_id)
 
-    if not service_feedback:
-        return {"service_id": service_id, "rating": None, "feedback_count": 0}
-
-    avg_rating = sum(f["rating"] for f in service_feedback) / len(service_feedback)
+    # Also try to get ERC-8004 on-chain reputation if seller has it
+    onchain_reputation = None
+    if db_service.provider_wallet:
+        seller_8004 = await get_8004_credentials_simple(db_service.provider_wallet)
+        if seller_8004 and seller_8004.get("agent_id"):
+            try:
+                onchain_reputation = get_reputation(seller_8004["agent_id"], tag="service")
+            except Exception:
+                pass
 
     return {
         "service_id": service_id,
-        "rating": round(avg_rating, 2),
-        "feedback_count": len(service_feedback),
-        "recent_feedback": service_feedback[-5:],
+        "average_rating": stats["average_rating"],
+        "review_count": stats["review_count"],
+        "verified_purchases_only": True,
+        "reviews": [
+            {
+                "id": r.id,
+                "rating": r.rating,
+                "comment": r.comment,
+                "reviewer": r.agent_name,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in reviews[:20]  # Limit to 20 most recent
+        ],
+        "onchain_reputation": onchain_reputation,
     }
 
 
@@ -2062,9 +2120,6 @@ async def get_stats(request: Request):
 
 
 # ============ PROXY ENDPOINT ============
-
-# Transaction log for audit
-transactions_log: list = []
 
 
 def generate_hmac_signature(body: str, timestamp: int, service_id: str, secret_token: str) -> str:
@@ -2263,19 +2318,17 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
         "X-MoltMart-Service": service_id,
     }
 
-    # Log transaction
-    tx_log = {
-        "tx_id": tx_id,
-        "service_id": service_id,
-        "service_name": service.name,
-        "buyer_wallet": agent.wallet_address,
-        "buyer_name": agent.name,
-        "seller_wallet": service.provider_wallet,
-        "price_usdc": service.price_usdc,
-        "timestamp": datetime.utcnow().isoformat(),
-        "status": "pending",
-    }
-    transactions_log.append(tx_log)
+    # Create transaction record for database
+    tx_record = TransactionDB(
+        id=tx_id,
+        service_id=service_id,
+        service_name=service.name,
+        buyer_wallet=agent.wallet_address.lower(),
+        buyer_name=agent.name,
+        seller_wallet=service.provider_wallet.lower(),
+        price_usdc=service.price_usdc,
+        status="pending",
+    )
 
     # Forward request to seller's endpoint
     try:
@@ -2286,15 +2339,18 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                 headers=headers,
             )
 
-        # Update transaction log
-        tx_log["status"] = "completed" if response.status_code == 200 else "failed"
-        tx_log["seller_response_code"] = response.status_code
+        # Update transaction status
+        tx_record.status = "completed" if response.status_code == 200 else "failed"
+        tx_record.seller_response_code = response.status_code
 
         # Update service stats in database
         if response.status_code == 200:
             await update_service_stats(service_id, calls_delta=1, revenue_delta=service.price_usdc)
         else:
             await update_service_stats(service_id, calls_delta=1, revenue_delta=0)
+
+        # Log transaction to database
+        await log_transaction(tx_record)
 
         # Return seller's response to buyer
         return Response(
@@ -2309,7 +2365,8 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
         )
 
     except httpx.TimeoutException as e:
-        tx_log["status"] = "timeout"
+        tx_record.status = "timeout"
+        await log_transaction(tx_record)
         raise HTTPException(
             status_code=504,
             detail={
@@ -2319,8 +2376,9 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
             },
         ) from e
     except httpx.RequestError as e:
-        tx_log["status"] = "error"
-        tx_log["error"] = str(e)
+        tx_record.status = "error"
+        tx_record.error = str(e)
+        await log_transaction(tx_record)
         raise HTTPException(
             status_code=502,
             detail={
@@ -2412,21 +2470,17 @@ async def call_service_onchain(
         "X-MoltMart-Payment-Method": "onchain",  # Indicate this was an on-chain payment
     }
     
-    # Log transaction
-    tx_log = {
-        "tx_id": tx_id,
-        "service_id": service_id,
-        "service_name": service.name,
-        "buyer_wallet": agent.wallet_address,
-        "buyer_name": agent.name,
-        "seller_wallet": service.provider_wallet,
-        "price_usdc": service.price_usdc,
-        "payment_method": "onchain",
-        "payment_tx_hash": call_request.tx_hash,
-        "timestamp": datetime.utcnow().isoformat(),
-        "status": "pending",
-    }
-    transactions_log.append(tx_log)
+    # Create transaction record for database
+    tx_record = TransactionDB(
+        id=tx_id,
+        service_id=service_id,
+        service_name=service.name,
+        buyer_wallet=agent.wallet_address.lower(),
+        buyer_name=agent.name,
+        seller_wallet=service.provider_wallet.lower(),
+        price_usdc=service.price_usdc,
+        status="pending",
+    )
     
     # Forward request to seller's endpoint
     try:
@@ -2437,15 +2491,18 @@ async def call_service_onchain(
                 headers=headers,
             )
         
-        # Update transaction log
-        tx_log["status"] = "completed" if response.status_code == 200 else "failed"
-        tx_log["seller_response_code"] = response.status_code
+        # Update transaction status
+        tx_record.status = "completed" if response.status_code == 200 else "failed"
+        tx_record.seller_response_code = response.status_code
         
         # Update service stats
         if response.status_code == 200:
             await update_service_stats(service_id, calls_delta=1, revenue_delta=service.price_usdc)
         else:
             await update_service_stats(service_id, calls_delta=1, revenue_delta=0)
+        
+        # Log to database
+        await log_transaction(tx_record)
         
         return Response(
             content=response.content,
@@ -2459,26 +2516,36 @@ async def call_service_onchain(
         )
     
     except httpx.TimeoutException as e:
-        tx_log["status"] = "timeout"
+        tx_record.status = "timeout"
+        await log_transaction(tx_record)
         raise HTTPException(status_code=504, detail={"error": "Seller endpoint timed out", "tx_id": tx_id}) from e
     except httpx.RequestError as e:
-        tx_log["status"] = "error"
-        tx_log["error"] = str(e)
+        tx_record.status = "error"
+        tx_record.error = str(e)
+        await log_transaction(tx_record)
         raise HTTPException(status_code=502, detail={"error": "Failed to reach seller endpoint", "tx_id": tx_id}) from e
 
 
 @app.get("/transactions/mine")
 async def get_my_transactions(agent: Agent = Depends(require_agent), limit: int = 20):
     """Get your recent transactions (as buyer or seller)"""
-    my_txs = [
-        tx
-        for tx in transactions_log
-        if tx["buyer_wallet"].lower() == agent.wallet_address.lower()
-        or tx["seller_wallet"].lower() == agent.wallet_address.lower()
-    ]
+    transactions = await get_transactions_by_wallet(agent.wallet_address, limit=limit)
     return {
-        "transactions": my_txs[-limit:],
-        "total": len(my_txs),
+        "transactions": [
+            {
+                "id": tx.id,
+                "service_id": tx.service_id,
+                "service_name": tx.service_name,
+                "buyer_wallet": tx.buyer_wallet,
+                "buyer_name": tx.buyer_name,
+                "seller_wallet": tx.seller_wallet,
+                "price_usdc": tx.price_usdc,
+                "status": tx.status,
+                "created_at": tx.created_at.isoformat() if tx.created_at else None,
+            }
+            for tx in transactions
+        ],
+        "total": len(transactions),
     }
 
 

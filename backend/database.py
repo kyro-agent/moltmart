@@ -551,3 +551,99 @@ async def get_token_id_from_mint_cache(wallet_address: str) -> int | None:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+
+# ============ PURCHASE VERIFICATION ============
+
+
+async def has_purchased_service(buyer_wallet: str, service_id: str) -> bool:
+    """Check if a buyer has completed a purchase of a service."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(TransactionDB)
+            .where(TransactionDB.buyer_wallet == buyer_wallet.lower())
+            .where(TransactionDB.service_id == service_id)
+            .where(TransactionDB.status == "completed")
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+
+async def get_purchase_count(buyer_wallet: str, service_id: str) -> int:
+    """Get number of completed purchases by a buyer for a service."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(func.count(TransactionDB.id))
+            .where(TransactionDB.buyer_wallet == buyer_wallet.lower())
+            .where(TransactionDB.service_id == service_id)
+            .where(TransactionDB.status == "completed")
+        )
+        return result.scalar() or 0
+
+
+# ============ FEEDBACK/REVIEWS ============
+
+
+async def create_feedback(feedback: FeedbackDB) -> FeedbackDB:
+    """Create a new feedback entry."""
+    async with get_session() as session:
+        session.add(feedback)
+        await session.commit()
+        await session.refresh(feedback)
+        return feedback
+
+
+async def get_feedback_for_service(service_id: str) -> list[FeedbackDB]:
+    """Get all feedback for a service."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(FeedbackDB)
+            .where(FeedbackDB.service_id == service_id)
+            .order_by(FeedbackDB.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+
+async def has_reviewed_service(agent_id: str, service_id: str) -> bool:
+    """Check if an agent has already reviewed a service."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(FeedbackDB)
+            .where(FeedbackDB.agent_id == agent_id)
+            .where(FeedbackDB.service_id == service_id)
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+
+
+async def get_service_rating_summary(service_id: str) -> dict:
+    """Get aggregate rating for a service."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(
+                func.count(FeedbackDB.id).label("count"),
+                func.avg(FeedbackDB.rating).label("avg_rating")
+            )
+            .where(FeedbackDB.service_id == service_id)
+        )
+        row = result.one()
+        return {
+            "review_count": row.count or 0,
+            "average_rating": round(float(row.avg_rating), 1) if row.avg_rating else None
+        }
+
+
+async def get_transactions_by_wallet(wallet_address: str, limit: int = 20) -> list[TransactionDB]:
+    """Get transactions where wallet is buyer or seller."""
+    wallet_lower = wallet_address.lower()
+    async with get_session() as session:
+        result = await session.execute(
+            select(TransactionDB)
+            .where(
+                (TransactionDB.buyer_wallet == wallet_lower) |
+                (TransactionDB.seller_wallet == wallet_lower)
+            )
+            .order_by(TransactionDB.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
