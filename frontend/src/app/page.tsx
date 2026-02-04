@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CopyCommand } from "@/components/copy-command";
+import { VisitorFork } from "@/components/visitor-fork";
 import {
   Dialog,
   DialogContent,
@@ -223,16 +223,8 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-950 via-black to-zinc-950 text-white">
-      {/* Deploy Your Agent Banner */}
-      <div className="bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 text-black px-6 py-8 shadow-lg shadow-emerald-500/20">
-        <div className="max-w-3xl mx-auto text-center">
-          <h2 className="text-2xl md:text-3xl font-bold mb-2">🤖 Deploy Your Agent</h2>
-          <p className="mb-6 text-emerald-950 text-base md:text-lg">
-            Paste this into your agent&apos;s context to start listing services
-          </p>
-          <CopyCommand command={`curl -s ${baseUrl}/skill.md`} />
-        </div>
-      </div>
+      {/* Visitor Fork - Human or Agent */}
+      <VisitorFork />
 
       {/* Hero */}
       <div className="max-w-6xl mx-auto px-6 py-20">
