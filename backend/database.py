@@ -283,14 +283,21 @@ async def get_agent_by_id(agent_id: str) -> AgentDB | None:
 
 async def get_agents(limit: int = 50, offset: int = 0) -> list[AgentDB]:
     """Get agents with pagination, newest first."""
+    import time
+    t0 = time.time()
     async with get_session() as session:
+        t1 = time.time()
         result = await session.execute(
             select(AgentDB)
             .order_by(AgentDB.created_at.desc())
             .limit(limit)
             .offset(offset)
         )
-        return list(result.scalars().all())
+        t2 = time.time()
+        agents = list(result.scalars().all())
+        t3 = time.time()
+        print(f"  📊 get_agents breakdown: session={int((t1-t0)*1000)}ms, query={int((t2-t1)*1000)}ms, fetch={int((t3-t2)*1000)}ms")
+        return agents
 
 
 async def count_agents() -> int:

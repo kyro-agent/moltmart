@@ -1094,8 +1094,17 @@ async def list_agents(request: Request, limit: int = 50, offset: int = 0):
     
     Returns public profiles (no API keys).
     """
+    import time
+    
+    start = time.time()
     db_agents = await get_agents(limit=limit, offset=offset)
+    t1 = time.time()
+    print(f"⏱️ get_agents(): {(t1-start)*1000:.0f}ms")
+    
     total = await count_agents()
+    t2 = time.time()
+    print(f"⏱️ count_agents(): {(t2-t1)*1000:.0f}ms")
+    print(f"⏱️ TOTAL DB: {(t2-start)*1000:.0f}ms")
     
     agents = [
         AgentPublicProfile(
