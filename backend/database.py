@@ -76,7 +76,8 @@ def _create_engine():
             # asyncpg-specific settings
             connect_args={
                 "command_timeout": 30,
-                "server_settings": {"application_name": "moltmart"}
+                "server_settings": {"application_name": "moltmart"},
+                "ssl": "prefer"  # Try SSL, fall back to non-SSL
             }
         )
     else:
