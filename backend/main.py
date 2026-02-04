@@ -52,7 +52,7 @@ from database import (
     init_db,
     update_service_stats,
 )
-from erc8004 import check_connection as check_8004_connection
+from erc8004 import check_connection as check_8004_connection, IDENTITY_REGISTRY, BASE_CHAIN_ID
 
 # ERC-8004 integration
 from erc8004 import get_8004_credentials_simple, get_agent_registry_uri, verify_token_ownership
@@ -284,8 +284,11 @@ ONCHAIN_CHALLENGE_TARGET = os.getenv("ONCHAIN_CHALLENGE_TARGET", "0x90d9c75f3761
 payment_challenges: dict[str, dict] = {}
 PAYMENT_CHALLENGE_TTL_SECONDS = 600  # 10 minutes to complete payment
 
-# USDC contract on Base mainnet
-USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+# USDC contract
+if USE_TESTNET:
+    USDC_CONTRACT = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"  # Circle testnet USDC on Base Sepolia
+else:
+    USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # USDC on Base mainnet
 USDC_DECIMALS = 6
 
 
@@ -584,8 +587,8 @@ async def root():
             "services_per_hour": SERVICES_PER_HOUR,
             "services_per_day": SERVICES_PER_DAY,
         },
-        "network": "eip155:8453 (Base)",
-        "token": "0xa6e3f88Ac4a9121B697F7bC9674C828d8d6D0B07",
+        "network": f"{NETWORK} ({'Base Sepolia' if USE_TESTNET else 'Base'})",
+        "token": "0xa6e3f88Ac4a9121B697F7bC9674C828d8d6D0B07",  # $MOLTMART token (mainnet only)
     }
 
 
@@ -1053,14 +1056,14 @@ async def get_payment_challenge(action: str, wallet_address: str, service_id: st
         "payment": {
             "amount_usdc": amount,
             "recipient": recipient,
-            "network": "Base (eip155:8453)",
+            "network": f"{'Base Sepolia' if USE_TESTNET else 'Base'} ({NETWORK})",
             "token": "USDC",
             "token_contract": USDC_CONTRACT,
         },
         "service_id": service_id,
         "nonce": nonce,
         "expires_in_seconds": PAYMENT_CHALLENGE_TTL_SECONDS,
-        "instructions": f"Send exactly {amount} USDC to {recipient} on Base. Then call the endpoint with tx_hash parameter.",
+        "instructions": f"Send exactly {amount} USDC to {recipient} on {'Base Sepolia (testnet)' if USE_TESTNET else 'Base'}. Then call the endpoint with tx_hash parameter.",
         "next_step": next_step,
     }
 
@@ -1283,8 +1286,9 @@ async def register_agent(agent_data: AgentRegister, request: Request):
                     detail=f"You don't own ERC-8004 #{agent_data.erc8004_id}. Owner: {verification.get('owner', 'unknown')}",
                 )
             agent_8004_id = agent_data.erc8004_id
-            agent_8004_registry = f"eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
-            scan_url = f"https://basescan.org/nft/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432/{agent_8004_id}"
+            agent_8004_registry = f"eip155:{BASE_CHAIN_ID}:{IDENTITY_REGISTRY}"
+            scan_base = "sepolia.basescan.org" if USE_TESTNET else "basescan.org"
+            scan_url = f"https://{scan_base}/nft/{IDENTITY_REGISTRY}/{agent_8004_id}"
             print(f"✅ Verified ownership of ERC-8004 #{agent_8004_id}")
         else:
             # No ID provided - just verify they have at least one (balanceOf check)
@@ -1818,14 +1822,14 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
                 "accepts": [
                     {
                         "scheme": "exact",
-                        "network": "eip155:8453",
+                        "network": NETWORK,
                         "maxAmountRequired": str(int(service.price_usdc * 1_000_000)),  # USDC has 6 decimals
                         "resource": resource_url,
                         "description": f"Payment for service: {service.name}",
                         "mimeType": "application/json",
                         "payTo": service.provider_wallet,
                         "maxTimeoutSeconds": 300,
-                        "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",  # USDC on Base
+                        "asset": USDC_CONTRACT,
                         "extra": {
                             "name": "USD Coin",
                             "decimals": 6,
@@ -1847,12 +1851,12 @@ async def call_service(service_id: str, request: Request, agent: Agent = Depends
         # Build requirements for verification
         payment_requirements = {
             "scheme": "exact",
-            "network": "eip155:8453",
+            "network": NETWORK,
             "maxAmountRequired": str(int(service.price_usdc * 1_000_000)),
             "resource": resource_url,
             "payTo": service.provider_wallet,
             "maxTimeoutSeconds": 300,
-            "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "asset": USDC_CONTRACT,
         }
 
         # Verify and settle via facilitator
