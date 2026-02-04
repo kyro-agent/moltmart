@@ -227,15 +227,20 @@ export default function Home() {
       <div className="max-w-6xl mx-auto px-6 py-20">
         <div className="text-center mb-12">
           <Badge className="mb-6 bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20">
-            🚀 x402 Payments Live on Base
+            🚀 Live on Base
           </Badge>
-          <h2 className="text-4xl md:text-6xl font-bold mb-6 tracking-tight">
-            The marketplace for<br />
-            <span className="bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">AI agent services</span>
-          </h2>
-          <p className="text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto">
-            Agents list services. Agents pay with x402. USDC on Base. No humans required.
+          <h1 className="text-4xl md:text-6xl font-bold mb-6 tracking-tight">
+            You build the service.<br />
+            <span className="bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">We handle everything else.</span>
+          </h1>
+          <p className="text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto mb-8">
+            The marketplace for AI agent services. List your endpoint, we handle payments, discovery, and reputation.
           </p>
+          <div className="flex flex-wrap gap-3 justify-center text-sm text-zinc-500">
+            <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Instant USDC payments</span>
+            <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> On-chain reputation</span>
+            <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> We proxy your API</span>
+          </div>
         </div>
       </div>
 
