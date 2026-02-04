@@ -9,13 +9,23 @@ import os
 from eth_account import Account
 from web3 import Web3
 
-# Base Mainnet
-BASE_CHAIN_ID = 8453
-BASE_RPC = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
+# Network configuration - set USE_TESTNET=true for Base Sepolia
+USE_TESTNET = os.getenv("USE_TESTNET", "false").lower() == "true"
 
-# ERC-8004 Contract Addresses on Base Mainnet
-IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
-REPUTATION_REGISTRY = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
+if USE_TESTNET:
+    # Base Sepolia (Testnet)
+    BASE_CHAIN_ID = 84532
+    BASE_RPC = os.getenv("BASE_RPC_URL", "https://sepolia.base.org")
+    IDENTITY_REGISTRY = "0x8004A818BFB912233c491871b3d84c89A494BD9e"
+    REPUTATION_REGISTRY = "0x8004B663056A597Dffe9eCcC1965A193B7388713"
+    print("🧪 ERC-8004: Using Base Sepolia TESTNET")
+else:
+    # Base Mainnet
+    BASE_CHAIN_ID = 8453
+    BASE_RPC = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
+    IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+    REPUTATION_REGISTRY = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
+    print("🔴 ERC-8004: Using Base MAINNET")
 
 # MoltMart operator wallet (same as facilitator - receives fees, mints identities)
 OPERATOR_PRIVATE_KEY = os.getenv("FACILITATOR_PRIVATE_KEY", "")
@@ -59,16 +69,18 @@ def get_operator_account():
     return Account.from_key(OPERATOR_PRIVATE_KEY)
 
 
-def register_agent(agent_uri: str) -> dict:
+def register_agent(agent_uri: str, recipient_wallet: str = None) -> dict:
     """
-    Register a new agent identity on ERC-8004
+    Register a new agent identity on ERC-8004 and transfer to recipient.
 
     Args:
         agent_uri: URI pointing to agent registration JSON (IPFS or HTTPS)
+        recipient_wallet: Wallet address to transfer the NFT to
 
     Returns:
         dict with agentId (tokenId) and transaction hash
     """
+    print(f"🚀 register_agent called: uri={agent_uri[:50]}..., recipient={recipient_wallet}")
     if not identity_registry:
         return {"error": "Identity registry not configured"}
 
@@ -77,7 +89,7 @@ def register_agent(agent_uri: str) -> dict:
         return {"error": "Operator wallet not configured"}
 
     try:
-        # Build transaction
+        # Build mint transaction
         nonce = w3.eth.get_transaction_count(account.address)
 
         tx = identity_registry.functions.register(agent_uri).build_transaction(
@@ -90,7 +102,7 @@ def register_agent(agent_uri: str) -> dict:
             }
         )
 
-        # Sign and send
+        # Sign and send mint tx
         signed = account.sign_transaction(tx)
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
 
@@ -107,7 +119,75 @@ def register_agent(agent_uri: str) -> dict:
             except Exception:
                 continue
 
-        return {"success": True, "agent_id": agent_id, "tx_hash": tx_hash.hex(), "block": receipt.blockNumber}
+        # Transfer NFT to recipient if specified
+        transfer_tx_hash = None
+        transfer_error = None
+        print(f"🔍 Transfer check: recipient_wallet={recipient_wallet}, agent_id={agent_id}")
+        if recipient_wallet and agent_id is not None:
+            try:
+                recipient = Web3.to_checksum_address(recipient_wallet)
+                
+                # Small delay to let RPC node state propagate after mint confirmation
+                import time
+                time.sleep(2)
+                
+                # Use 'pending' to include any pending transactions in nonce count
+                nonce = w3.eth.get_transaction_count(account.address, 'pending')
+                print(f"🔢 Transfer nonce (pending): {nonce}")
+                
+                # Check operator balance for gas
+                operator_balance = w3.eth.get_balance(account.address)
+                print(f"💰 Operator balance: {w3.from_wei(operator_balance, 'ether')} ETH")
+                
+                # Use slightly higher gas price to avoid "replacement transaction underpriced"
+                current_gas_price = w3.eth.gas_price
+                bumped_gas_price = int(current_gas_price * 1.2)  # 20% bump
+                
+                transfer_tx = identity_registry.functions.transferFrom(
+                    account.address,
+                    recipient,
+                    agent_id
+                ).build_transaction({
+                    "from": account.address,
+                    "nonce": nonce,
+                    "gas": 100000,
+                    "gasPrice": bumped_gas_price,
+                    "chainId": BASE_CHAIN_ID,
+                })
+                
+                print(f"📝 Transfer TX built: gas={transfer_tx['gas']}, gasPrice={transfer_tx['gasPrice']}")
+                
+                signed_transfer = account.sign_transaction(transfer_tx)
+                transfer_tx_hash = w3.eth.send_raw_transaction(signed_transfer.raw_transaction)
+                print(f"📤 Transfer TX sent: {transfer_tx_hash.hex()}")
+                
+                transfer_receipt = w3.eth.wait_for_transaction_receipt(transfer_tx_hash, timeout=60)
+                print(f"✅ Transferred ERC-8004 #{agent_id} to {recipient} (block {transfer_receipt.blockNumber})")
+            except Exception as e:
+                import traceback
+                transfer_error = str(e)
+                print(f"❌ Transfer failed: {e}")
+                print(f"📋 Traceback: {traceback.format_exc()}")
+
+        # If recipient was specified but transfer failed, return error
+        if recipient_wallet and agent_id is not None and transfer_tx_hash is None:
+            return {
+                "error": f"Mint succeeded (ID #{agent_id}) but transfer failed: {transfer_error}",
+                "partial_success": True,
+                "agent_id": agent_id,
+                "mint_tx_hash": tx_hash.hex(),
+                "block": receipt.blockNumber,
+                "stuck_on": account.address
+            }
+
+        return {
+            "success": True,
+            "agent_id": agent_id,
+            "tx_hash": tx_hash.hex(),
+            "transfer_tx_hash": transfer_tx_hash.hex() if transfer_tx_hash else None,
+            "block": receipt.blockNumber,
+            "owner": recipient_wallet or account.address
+        }
 
     except Exception as e:
         return {"error": str(e)}
@@ -131,6 +211,30 @@ def get_agent_info(agent_id: int) -> dict:
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+def verify_token_ownership(agent_id: int, wallet_address: str) -> dict:
+    """
+    Verify that a wallet owns a specific ERC-8004 token.
+    Fast, single contract call.
+    
+    Returns: {"verified": True/False, "owner": actual_owner}
+    """
+    if not identity_registry:
+        return {"verified": False, "error": "Identity registry not configured"}
+
+    try:
+        wallet = Web3.to_checksum_address(wallet_address)
+        owner = identity_registry.functions.ownerOf(agent_id).call()
+        
+        verified = owner.lower() == wallet.lower()
+        return {
+            "verified": verified,
+            "owner": owner,
+            "agent_id": agent_id,
+        }
+    except Exception as e:
+        return {"verified": False, "error": str(e)}
 
 
 def give_feedback(agent_id: int, value: int = 1, tag: str = "service") -> dict:
@@ -273,12 +377,46 @@ async def get_8004_credentials_simple(wallet_address: str) -> dict | None:
         if balance == 0:
             return None
 
-        # For now, we just return that they have credentials
-        # TODO: Get the actual token ID(s) owned by this wallet
-        # This would require iterating through Transfer events or using an indexer
+        # Get the actual token ID by querying Transfer events
+        # Look for transfers TO this wallet
+        agent_id = None
+        try:
+            # Get Transfer events where 'to' is this wallet
+            # Use get_logs which is more universally supported than create_filter
+            current_block = w3.eth.block_number
+            from_block = max(0, current_block - 500_000)  # ~1 week of blocks on Base
+            
+            # Query logs directly (more reliable than filters)
+            events = identity_registry.events.Transfer.get_logs(
+                from_block=from_block,
+                to_block='latest',
+                argument_filters={'to': wallet}
+            )
+            
+            print(f"🔍 Found {len(events)} Transfer events for {wallet}")
+            
+            if events:
+                # Get the most recent transfer to this wallet
+                latest_event = events[-1]
+                agent_id = latest_event.args.tokenId
+                print(f"📝 Most recent transfer: tokenId={agent_id}")
+                
+                # Verify this wallet still owns this token
+                current_owner = identity_registry.functions.ownerOf(agent_id).call()
+                if current_owner.lower() != wallet.lower():
+                    print(f"⚠️ Token {agent_id} no longer owned by {wallet}")
+                    agent_id = None  # Token was transferred away
+                else:
+                    print(f"✅ Verified ownership of token {agent_id}")
+        except Exception as e:
+            print(f"❌ Could not fetch agent_id via events: {e}")
+            import traceback
+            traceback.print_exc()
+            # Continue without agent_id - balance check still valid
 
         return {
             "has_8004": True,
+            "agent_id": agent_id,
             "agent_count": balance,
             "agent_registry": f"eip155:{BASE_CHAIN_ID}:{IDENTITY_REGISTRY}",
             "8004scan_url": f"https://basescan.org/address/{wallet}#nfttransfers",

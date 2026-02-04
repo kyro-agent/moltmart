@@ -193,6 +193,15 @@ async def count_agents() -> int:
         return result.scalar() or 0
 
 
+async def get_agents(limit: int = 50, offset: int = 0) -> list[AgentDB]:
+    """Get all agents with pagination"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentDB).order_by(AgentDB.created_at.desc()).limit(limit).offset(offset)
+        )
+        return result.scalars().all()
+
+
 async def count_services() -> int:
     """Count total services"""
     async with async_session() as session:
@@ -214,3 +223,15 @@ async def log_transaction(tx: TransactionDB):
     async with async_session() as session:
         session.add(tx)
         await session.commit()
+
+
+async def delete_agent_by_wallet(wallet: str) -> bool:
+    """Delete agent by wallet address (admin only)"""
+    async with async_session() as session:
+        result = await session.execute(select(AgentDB).where(AgentDB.wallet_address == wallet.lower()))
+        agent = result.scalar_one_or_none()
+        if agent:
+            await session.delete(agent)
+            await session.commit()
+            return True
+        return False
