@@ -769,7 +769,8 @@ async def verify_onchain_challenge(wallet_address: str, tx_hash: str) -> tuple[b
             return False, f"Transaction target {tx['to']} doesn't match expected {expected_target}"
         
         # Verify calldata contains our nonce
-        tx_input = tx["input"].lower() if tx["input"] else "0x"
+        # Note: tx["input"] is HexBytes, need .hex() to convert to string
+        tx_input = tx["input"].hex().lower() if tx["input"] else "0x"
         if tx_input != expected_calldata.lower():
             return False, f"Transaction calldata doesn't match. Expected {expected_calldata}, got {tx_input}"
         
