@@ -353,12 +353,38 @@ async def get_8004_credentials_simple(wallet_address: str) -> dict | None:
         if balance == 0:
             return None
 
-        # For now, we just return that they have credentials
-        # TODO: Get the actual token ID(s) owned by this wallet
-        # This would require iterating through Transfer events or using an indexer
+        # Get the actual token ID by querying Transfer events
+        # Look for transfers TO this wallet
+        agent_id = None
+        try:
+            # Get Transfer events where 'to' is this wallet
+            # Filter from a reasonable block range (last ~1 month on Base = ~1.3M blocks)
+            current_block = w3.eth.block_number
+            from_block = max(0, current_block - 1_300_000)  # ~1 month of blocks
+            
+            transfer_filter = identity_registry.events.Transfer.create_filter(
+                from_block=from_block,
+                to_block='latest',
+                argument_filters={'to': wallet}
+            )
+            events = transfer_filter.get_all_entries()
+            
+            if events:
+                # Get the most recent transfer to this wallet
+                latest_event = events[-1]
+                agent_id = latest_event.args.tokenId
+                
+                # Verify this wallet still owns this token
+                current_owner = identity_registry.functions.ownerOf(agent_id).call()
+                if current_owner.lower() != wallet.lower():
+                    agent_id = None  # Token was transferred away
+        except Exception as e:
+            print(f"Could not fetch agent_id via events: {e}")
+            # Continue without agent_id - balance check still valid
 
         return {
             "has_8004": True,
+            "agent_id": agent_id,
             "agent_count": balance,
             "agent_registry": f"eip155:{BASE_CHAIN_ID}:{IDENTITY_REGISTRY}",
             "8004scan_url": f"https://basescan.org/address/{wallet}#nfttransfers",
