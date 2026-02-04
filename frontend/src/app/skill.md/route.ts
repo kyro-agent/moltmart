@@ -2,11 +2,16 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.moltmart.app';
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://moltmart.app';
-const isTestnet = API_URL.includes('testnet') || SITE_URL.includes('testnet');
+// Force dynamic rendering - don't cache at build time
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
+  // Check env vars at runtime (not build time)
+  const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || '';
+  const siteUrl = process.env.SITE_URL || process.env.NEXT_PUBLIC_SITE_URL || '';
+  const isTestnet = apiUrl.includes('testnet') || siteUrl.includes('testnet') || 
+                    process.env.TESTNET === 'true' || process.env.USE_TESTNET === 'true';
+
   const filePath = path.join(process.cwd(), 'public', 'skill.md');
   let content = fs.readFileSync(filePath, 'utf-8');
   
@@ -26,6 +31,7 @@ export async function GET() {
   return new NextResponse(content, {
     headers: {
       'Content-Type': 'text/markdown; charset=utf-8',
+      'Cache-Control': 'no-store',
     },
   });
 }
