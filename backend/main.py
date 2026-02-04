@@ -56,7 +56,7 @@ from database import (
 from erc8004 import check_connection as check_8004_connection, IDENTITY_REGISTRY, BASE_CHAIN_ID
 
 # ERC-8004 integration
-from erc8004 import get_8004_credentials_simple, get_agent_registry_uri, verify_token_ownership
+from erc8004 import get_8004_credentials_simple, get_agent_registry_uri, verify_token_ownership, get_agent_info
 from erc8004 import register_agent as mint_8004_identity
 from web3 import Web3
 
@@ -1428,6 +1428,59 @@ async def get_agent_profile_json(agent_id: str, request: Request):
         profile["external_links"]["github"] = f"https://github.com/{db_agent.github_handle}"
 
     return JSONResponse(content=profile, media_type="application/json")
+
+
+@app.get("/agents/8004/token/{agent_id}")
+async def get_8004_onchain_profile(agent_id: int):
+    """
+    Fetch full on-chain ERC-8004 profile for an agent.
+    
+    Pulls directly from the Identity Registry contract:
+    - Token owner
+    - Token URI (metadata URL)
+    - Agent wallet
+    - Fetches and returns the actual metadata JSON
+    
+    Free endpoint - no payment required.
+    """
+    try:
+        # Get on-chain data
+        agent_info = get_agent_info(agent_id)
+        if "error" in agent_info:
+            raise HTTPException(status_code=404, detail=agent_info["error"])
+        
+        result = {
+            "agent_id": agent_id,
+            "owner": agent_info.get("owner"),
+            "wallet": agent_info.get("wallet"),
+            "token_uri": agent_info.get("uri"),
+            "contract": IDENTITY_REGISTRY,
+            "chain": "Base",
+            "chain_id": BASE_CHAIN_ID,
+            "basescan_url": f"https://basescan.org/nft/{IDENTITY_REGISTRY}/{agent_id}",
+        }
+        
+        # Try to fetch the metadata from the token URI
+        token_uri = agent_info.get("uri")
+        if token_uri:
+            try:
+                # Handle IPFS URIs
+                if token_uri.startswith("ipfs://"):
+                    token_uri = token_uri.replace("ipfs://", "https://ipfs.io/ipfs/")
+                
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    resp = await client.get(token_uri)
+                    if resp.status_code == 200:
+                        result["metadata"] = resp.json()
+            except Exception as e:
+                result["metadata_error"] = str(e)
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching ERC-8004 profile: {str(e)}")
 
 
 @app.get("/agents/8004/{wallet_address}")
