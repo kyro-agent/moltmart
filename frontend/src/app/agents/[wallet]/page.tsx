@@ -32,12 +32,29 @@ interface Service {
   agent_id: string;
 }
 
+interface OnChainProfile {
+  agent_id: number;
+  owner: string;
+  wallet: string;
+  token_uri: string;
+  contract: string;
+  chain: string;
+  basescan_url: string;
+  metadata?: {
+    name?: string;
+    description?: string;
+    image?: string;
+    [key: string]: unknown;
+  };
+}
+
 export default function AgentProfile() {
   const params = useParams();
   const wallet = params.wallet as string;
   
   const [agent, setAgent] = useState<Agent | null>(null);
   const [services, setServices] = useState<Service[]>([]);
+  const [onChainProfile, setOnChainProfile] = useState<OnChainProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +69,15 @@ export default function AgentProfile() {
       })
       .then((data) => {
         setAgent(data);
+        
+        // If agent has ERC-8004, fetch on-chain profile
+        if (data.agent_8004_id) {
+          fetch(`${API_URL}/agents/8004/token/${data.agent_8004_id}`)
+            .then(res => res.ok ? res.json() : null)
+            .then(profile => setOnChainProfile(profile))
+            .catch(() => {}); // Silently fail - on-chain data is optional
+        }
+        
         // Fetch agent's services
         return fetch(`${API_URL}/services?provider_wallet=${wallet}`);
       })
@@ -152,36 +178,52 @@ export default function AgentProfile() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div>
-                  <p className="text-zinc-500 text-xs uppercase">Agent ID</p>
-                  <a 
-                    href={`https://basescan.org/nft/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432/${agent.agent_8004_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-emerald-400 font-mono hover:underline"
-                  >
-                    #{agent.agent_8004_id}
-                  </a>
-                </div>
-                <div>
-                  <p className="text-zinc-500 text-xs uppercase">Registered</p>
-                  <p className="text-white">{new Date(agent.created_at).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <p className="text-zinc-500 text-xs uppercase">Identity Registry</p>
-                  <a 
-                    href="https://basescan.org/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-400 text-sm hover:underline"
-                  >
-                    View Contract ↗
-                  </a>
-                </div>
-                <div>
-                  <p className="text-zinc-500 text-xs uppercase">Network</p>
-                  <p className="text-white">Base Mainnet</p>
+              <div className="flex gap-6">
+                {/* Profile Image from on-chain metadata */}
+                {onChainProfile?.metadata?.image && (
+                  <div className="flex-shrink-0">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img 
+                      src={onChainProfile.metadata.image.startsWith("ipfs://") 
+                        ? onChainProfile.metadata.image.replace("ipfs://", "https://ipfs.io/ipfs/")
+                        : onChainProfile.metadata.image}
+                      alt={`${agent.name} avatar`}
+                      className="w-24 h-24 rounded-lg border-2 border-emerald-500/30 object-cover"
+                    />
+                  </div>
+                )}
+                
+                <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase">Agent ID</p>
+                    <a 
+                      href={onChainProfile?.basescan_url || `https://basescan.org/nft/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432/${agent.agent_8004_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-emerald-400 font-mono hover:underline"
+                    >
+                      #{agent.agent_8004_id}
+                    </a>
+                  </div>
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase">Registered</p>
+                    <p className="text-white">{new Date(agent.created_at).toLocaleDateString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase">Identity Registry</p>
+                    <a 
+                      href={`https://basescan.org/address/${onChainProfile?.contract || "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-400 text-sm hover:underline"
+                    >
+                      View Contract ↗
+                    </a>
+                  </div>
+                  <div>
+                    <p className="text-zinc-500 text-xs uppercase">Network</p>
+                    <p className="text-white">{onChainProfile?.chain || "Base"}</p>
+                  </div>
                 </div>
               </div>
               <div className="mt-4 pt-4 border-t border-zinc-700/50">
