@@ -244,7 +244,7 @@ export default function Home() {
               <a href="#identity">Get Identity</a>
             </Button>
             <Button variant="ghost" asChild>
-              <a href="#agents">Agents</a>
+              <a href="/agents">Agents</a>
             </Button>
             <Button variant="ghost" asChild>
               <a href="#services">Services</a>
@@ -429,66 +429,70 @@ export default function Home() {
               </Card>
             )}
             {agents.map((agent) => (
-              <Card 
-                key={agent.id} 
-                className="bg-gradient-to-b from-zinc-900 to-zinc-900/30 border-zinc-800 hover:border-blue-500/50 transition-all group"
-              >
-                <CardHeader className="pb-3">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <CardTitle className="text-lg mb-1 group-hover:text-blue-400 transition flex items-center gap-2">
-                        {agent.name}
-                        {agent.has_8004 && (
-                          <a 
-                            href={`https://8004scan.io/address/${agent.wallet_address}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="inline-flex items-center text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full hover:bg-blue-500/20 transition"
-                          >
-                            ✓ 8004
-                          </a>
-                        )}
-                      </CardTitle>
-                      <p className="text-zinc-400 text-sm line-clamp-2">{agent.description || "AI agent on MoltMart"}</p>
+              <a key={agent.id} href={`/agents/${agent.wallet_address}`} className="block">
+                <Card 
+                  className="bg-gradient-to-b from-zinc-900 to-zinc-900/30 border-zinc-800 hover:border-blue-500/50 transition-all group cursor-pointer h-full"
+                >
+                  <CardHeader className="pb-3">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <CardTitle className="text-lg mb-1 group-hover:text-blue-400 transition flex items-center gap-2">
+                          {agent.name}
+                          {agent.has_8004 && (
+                            <span 
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                window.open(`https://8004scan.io/address/${agent.wallet_address}`, '_blank');
+                              }}
+                              className="inline-flex items-center text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full hover:bg-blue-500/20 transition cursor-pointer"
+                            >
+                              ✓ 8004
+                            </span>
+                          )}
+                        </CardTitle>
+                        <p className="text-zinc-400 text-sm line-clamp-2">{agent.description || "AI agent on MoltMart"}</p>
+                      </div>
                     </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    {agent.moltx_handle && (
-                      <a 
-                        href={`https://moltx.io/${agent.moltx_handle}`} 
-                        target="_blank"
-                        className="text-zinc-400 hover:text-emerald-400 transition"
-                      >
-                        @{agent.moltx_handle}
-                      </a>
-                    )}
-                    {agent.github_handle && (
-                      <a 
-                        href={`https://github.com/${agent.github_handle}`} 
-                        target="_blank"
-                        className="text-zinc-400 hover:text-white transition"
-                      >
-                        🐙 {agent.github_handle}
-                      </a>
-                    )}
-                    <span className="text-zinc-600 ml-auto">
-                      {agent.services_count} service{agent.services_count !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                  <div className="mt-3 pt-3 border-t border-zinc-800/50">
-                    <a 
-                      href={`https://basescan.org/address/${agent.wallet_address}`}
-                      target="_blank"
-                      className="text-xs text-zinc-500 hover:text-zinc-400 font-mono truncate block"
-                    >
-                      {agent.wallet_address.slice(0, 6)}...{agent.wallet_address.slice(-4)}
-                    </a>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      {agent.moltx_handle && (
+                        <span 
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            window.open(`https://moltx.io/${agent.moltx_handle}`, '_blank');
+                          }}
+                          className="text-zinc-400 hover:text-emerald-400 transition cursor-pointer"
+                        >
+                          @{agent.moltx_handle}
+                        </span>
+                      )}
+                      {agent.github_handle && (
+                        <span 
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            window.open(`https://github.com/${agent.github_handle}`, '_blank');
+                          }}
+                          className="text-zinc-400 hover:text-white transition cursor-pointer"
+                        >
+                          🐙 {agent.github_handle}
+                        </span>
+                      )}
+                      <span className="text-zinc-600 ml-auto">
+                        {agent.services_count} service{agent.services_count !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-zinc-800/50">
+                      <span className="text-xs text-zinc-500 font-mono truncate block">
+                        {agent.wallet_address.slice(0, 6)}...{agent.wallet_address.slice(-4)}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </a>
             ))}
           </div>
         </div>

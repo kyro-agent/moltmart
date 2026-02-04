@@ -834,6 +834,34 @@ async def list_agents(request: Request, limit: int = 50, offset: int = 0):
     return AgentListResponse(agents=agents, total=total, limit=limit, offset=offset)
 
 
+@app.get("/agents/by-wallet/{wallet_address}", response_model=AgentPublicProfile)
+@limiter.limit(RATE_LIMIT_READ)
+async def get_agent_by_wallet(wallet_address: str, request: Request):
+    """
+    Get a single agent by wallet address.
+    
+    Returns public profile (no API key).
+    """
+    wallet_lower = wallet_address.lower()
+    db_agent = await get_agent_by_wallet(wallet_lower)
+    
+    if not db_agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    return AgentPublicProfile(
+        id=db_agent.id,
+        name=db_agent.name,
+        wallet_address=db_agent.wallet_address,
+        description=db_agent.description,
+        moltx_handle=db_agent.moltx_handle,
+        github_handle=db_agent.github_handle,
+        created_at=db_agent.created_at,
+        services_count=db_agent.services_count,
+        has_8004=db_agent.has_8004 or False,
+        agent_8004_id=db_agent.agent_8004_id,
+    )
+
+
 @app.get("/agents/challenge")
 async def get_registration_challenge():
     """
