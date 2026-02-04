@@ -1606,8 +1606,19 @@ async def get_agent_reputation(agent_id: int, tag: str = ""):
     """
     try:
         rep = get_reputation(agent_id, tag)
+        
+        # If there's an error querying on-chain, return empty reputation (agent is new)
         if "error" in rep:
-            raise HTTPException(status_code=404, detail=rep["error"])
+            return {
+                "agent_id": agent_id,
+                "tag": tag or "all",
+                "feedback_count": 0,
+                "reputation_score": 0,
+                "decimals": 0,
+                "chain": "Base",
+                "contract": "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
+                "status": "new",  # No feedback yet
+            }
         
         return {
             "agent_id": agent_id,
@@ -1618,10 +1629,19 @@ async def get_agent_reputation(agent_id: int, tag: str = ""):
             "chain": "Base",
             "contract": "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
         }
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching reputation: {str(e)}") from e
+        # Graceful fallback - return empty reputation instead of error
+        print(f"Reputation query failed for agent {agent_id}: {e}")
+        return {
+            "agent_id": agent_id,
+            "tag": tag or "all",
+            "feedback_count": 0,
+            "reputation_score": 0,
+            "decimals": 0,
+            "chain": "Base",
+            "contract": "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
+            "status": "new",
+        }
 
 
 # ============ SEED DATA ============
