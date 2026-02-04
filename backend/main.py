@@ -505,19 +505,63 @@ async def root():
 async def health():
     # Check ERC-8004 connection
     erc8004_status = check_8004_connection()
+    
+    chain_name = "Base Sepolia (84532)" if USE_TESTNET else "Base Mainnet (8453)"
 
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
+        "testnet": USE_TESTNET,
         "erc8004": {
             "connected": erc8004_status.get("connected", False),
-            "chain": "Base Mainnet (8453)",
+            "chain": chain_name,
             "identity_registry": erc8004_status.get("identity_registry"),
             "reputation_registry": erc8004_status.get("reputation_registry"),
             "operator_funded": erc8004_status.get("operator_balance_eth", 0) > 0
             if erc8004_status.get("operator_balance_eth")
             else False,
         },
+    }
+
+
+# ============ DEBUG ENDPOINT (TESTNET ONLY) ============
+
+@app.post("/debug/mint-test")
+async def debug_mint_test(mint_request: IdentityMintRequest):
+    """
+    DEBUG: Test ERC-8004 mint + transfer WITHOUT x402 payment.
+    Only available when USE_TESTNET=true.
+    """
+    if not USE_TESTNET:
+        raise HTTPException(status_code=403, detail="Debug endpoint only available on testnet")
+    
+    wallet = mint_request.wallet_address
+    print(f"🧪 DEBUG mint test for {wallet}")
+    
+    # Call the mint function directly
+    result = mint_8004_identity(
+        agent_uri=f"https://api.moltmart.app/debug/agent/{wallet}",
+        recipient_wallet=wallet
+    )
+    
+    if result.get("error"):
+        return {
+            "success": False,
+            "error": result.get("error"),
+            "partial_success": result.get("partial_success", False),
+            "agent_id": result.get("agent_id"),
+            "mint_tx_hash": result.get("mint_tx_hash"),
+            "stuck_on": result.get("stuck_on"),
+        }
+    
+    return {
+        "success": True,
+        "wallet_address": wallet,
+        "agent_id": result.get("agent_id"),
+        "mint_tx_hash": result.get("tx_hash"),
+        "transfer_tx_hash": result.get("transfer_tx_hash"),
+        "owner": result.get("owner"),
+        "scan_url": f"https://sepolia.basescan.org/tx/{result.get('tx_hash')}" if result.get("tx_hash") else None,
     }
 
 
