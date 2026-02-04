@@ -14,14 +14,34 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 # Database URL from environment (Railway provides this for PostgreSQL)
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./moltmart.db")
 
+# Debug: Print sanitized connection info
+def _sanitize_url(url: str) -> str:
+    """Remove password from URL for logging"""
+    import re
+    return re.sub(r':([^:@]+)@', ':***@', url)
+
+print(f"🔌 DATABASE_URL (sanitized): {_sanitize_url(DATABASE_URL)}")
+
 # Fix for Railway PostgreSQL URLs (they use postgres:// but SQLAlchemy needs postgresql://)
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+    print("📝 Converted postgres:// to postgresql+asyncpg://")
 elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    print("📝 Added +asyncpg to postgresql://")
+elif DATABASE_URL.startswith("sqlite"):
+    print("📝 Using SQLite (local dev mode)")
 
-# Create async engine
-engine = create_async_engine(DATABASE_URL, echo=False)
+print(f"🔌 Final DATABASE_URL (sanitized): {_sanitize_url(DATABASE_URL)}")
+
+# Create async engine with connection timeout
+engine = create_async_engine(
+    DATABASE_URL, 
+    echo=False,
+    pool_pre_ping=True,  # Test connections before using
+    pool_timeout=30,  # Connection pool timeout
+    connect_args={"timeout": 30} if "sqlite" not in DATABASE_URL else {}
+)
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 Base = declarative_base()
@@ -142,8 +162,21 @@ class MintCostDB(Base):
 
 async def init_db():
     """Initialize database tables"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    import asyncio
+    print("🔌 Attempting database connection...")
+    try:
+        async with asyncio.timeout(45):  # 45 second timeout
+            async with engine.begin() as conn:
+                print("✅ Database connection established!")
+                await conn.run_sync(Base.metadata.create_all)
+                print("✅ Database tables created/verified!")
+    except asyncio.TimeoutError:
+        print("❌ DATABASE CONNECTION TIMEOUT after 45 seconds")
+        print("   Check: Is PostgreSQL running? Is DATABASE_URL correct?")
+        raise
+    except Exception as e:
+        print(f"❌ DATABASE CONNECTION ERROR: {type(e).__name__}: {e}")
+        raise
 
 
 async def get_agent_by_api_key(api_key: str) -> AgentDB | None:
