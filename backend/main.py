@@ -694,7 +694,8 @@ async def _do_mint_identity(wallet: str, request: Request) -> IdentityMintRespon
             transfer_tx = mint_result.get("transfer_tx_hash")
             owner = mint_result.get("owner")
             costs = mint_result.get("costs", {})
-            scan_url = f"https://basescan.org/tx/{tx_hash}" if tx_hash else None
+            scan_base = "sepolia.basescan.org" if USE_TESTNET else "basescan.org"
+            scan_url = f"https://{scan_base}/tx/{tx_hash}" if tx_hash else None
             print(f"✅ Minted ERC-8004 identity #{agent_8004_id} for {wallet}")
             print(f"   Mint TX: {tx_hash}")
             print(f"   Transfer TX: {transfer_tx}")

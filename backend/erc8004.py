@@ -447,7 +447,7 @@ async def get_8004_credentials_simple(wallet_address: str) -> dict | None:
             "agent_id": agent_id,
             "agent_count": balance,
             "agent_registry": f"eip155:{BASE_CHAIN_ID}:{IDENTITY_REGISTRY}",
-            "8004scan_url": f"https://basescan.org/address/{wallet}#nfttransfers",
+            "8004scan_url": f"https://{'sepolia.basescan.org' if USE_TESTNET else 'basescan.org'}/address/{wallet}#nfttransfers",
         }
 
     except Exception as e:
