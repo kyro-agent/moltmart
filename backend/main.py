@@ -1416,19 +1416,26 @@ async def check_8004_credentials(wallet_address: str):
 # ============ SERVICE REGISTRY (x402 PROTECTED + RATE LIMITED) ============
 
 
-@app.post("/services", response_model=ServiceCreateResponse)
-async def create_service_endpoint(service: ServiceCreate, agent: Agent = Depends(require_agent)):
-    """
-    Register a new service on the marketplace.
+class ServiceCreateOnchain(BaseModel):
+    """Create service via on-chain USDC payment (for Bankr/custodial wallets)"""
+    
+    name: str
+    description: str
+    endpoint_url: HttpUrl
+    price_usdc: float
+    category: str
+    tx_hash: str  # USDC payment transaction hash
+    
+    @validator("tx_hash")
+    def validate_tx_hash(cls, v):
+        if not re.match(r"^0x[a-fA-F0-9]{64}$", v):
+            raise ValueError("Invalid transaction hash format")
+        return v.lower()
 
-    💰 Requires x402 payment: $0.02 USDC on Base
-    ⏱️ Rate limited: 3 per hour, 10 per day
 
-    Requires X-API-Key header with your agent's API key.
-
-    Returns a SECRET TOKEN - save it! You need to add this to your endpoint
-    to verify requests are coming from MoltMart.
-    """
+async def _do_create_service(service_data: ServiceCreate, agent: Agent) -> ServiceCreateResponse:
+    """Internal function to create service (used by both x402 and on-chain payment endpoints)"""
+    
     # Check rate limits
     allowed, error_info = check_rate_limit(agent.api_key)
     if not allowed:
@@ -1443,11 +1450,11 @@ async def create_service_endpoint(service: ServiceCreate, agent: Agent = Depends
     # Create service in database
     db_service = ServiceDB(
         id=service_id,
-        name=service.name,
-        description=service.description,
-        endpoint_url=str(service.endpoint_url),
-        price_usdc=service.price_usdc,
-        category=service.category,
+        name=service_data.name,
+        description=service_data.description,
+        endpoint_url=str(service_data.endpoint_url),
+        price_usdc=service_data.price_usdc,
+        category=service_data.category,
         provider_name=agent.name,
         provider_wallet=agent.wallet_address,
         secret_token_hash=secret_token_hash,
@@ -1463,11 +1470,11 @@ async def create_service_endpoint(service: ServiceCreate, agent: Agent = Depends
     # Return response with secret token (shown only once!)
     return ServiceCreateResponse(
         id=service_id,
-        name=service.name,
-        description=service.description,
-        endpoint_url=str(service.endpoint_url),
-        price_usdc=service.price_usdc,
-        category=service.category,
+        name=service_data.name,
+        description=service_data.description,
+        endpoint_url=str(service_data.endpoint_url),
+        price_usdc=service_data.price_usdc,
+        category=service_data.category,
         provider_name=agent.name,
         provider_wallet=agent.wallet_address,
         created_at=db_service.created_at,
@@ -1475,7 +1482,7 @@ async def create_service_endpoint(service: ServiceCreate, agent: Agent = Depends
         setup_instructions=f"""
 ⚠️ SAVE THIS TOKEN! It will not be shown again.
 
-Add this check to your endpoint at {service.endpoint_url}:
+Add this check to your endpoint at {service_data.endpoint_url}:
 
 ```python
 if request.headers.get("X-MoltMart-Token") != "{secret_token}":
@@ -1485,6 +1492,62 @@ if request.headers.get("X-MoltMart-Token") != "{secret_token}":
 MoltMart will include this token when forwarding buyer requests to your endpoint.
 """,
     )
+
+
+@app.post("/services/onchain", response_model=ServiceCreateResponse)
+async def create_service_onchain(
+    service: ServiceCreateOnchain,
+    agent: Agent = Depends(require_agent)
+):
+    """
+    List a service using on-chain USDC payment.
+    
+    **For custodial wallets (Bankr) that can't sign x402 payments.**
+    
+    Flow:
+    1. GET /payment/challenge?action=list&wallet_address=0x...
+    2. Send $0.02 USDC to the returned recipient address on Base
+    3. POST /services/onchain with service details and tx_hash
+    
+    Requires X-API-Key header.
+    For wallets that CAN sign, use POST /services (x402) instead.
+    """
+    # Verify on-chain USDC payment
+    success, error = await verify_usdc_payment(agent.wallet_address, service.tx_hash, 0.02, "list")
+    if not success:
+        raise HTTPException(status_code=400, detail=f"Payment verification failed: {error}")
+    
+    print(f"✅ On-chain USDC payment verified for service listing by {agent.name}")
+    
+    # Create the service data object
+    service_data = ServiceCreate(
+        name=service.name,
+        description=service.description,
+        endpoint_url=service.endpoint_url,
+        price_usdc=service.price_usdc,
+        category=service.category,
+    )
+    
+    return await _do_create_service(service_data, agent)
+
+
+@app.post("/services", response_model=ServiceCreateResponse)
+async def create_service_endpoint(service: ServiceCreate, agent: Agent = Depends(require_agent)):
+    """
+    Register a new service on the marketplace.
+
+    💰 Requires x402 payment: $0.02 USDC on Base
+    ⏱️ Rate limited: 3 per hour, 10 per day
+
+    Requires X-API-Key header with your agent's API key.
+    
+    **Can't sign x402?** Use POST /services/onchain instead (for Bankr/custodial wallets).
+
+    Returns a SECRET TOKEN - save it! You need to add this to your endpoint
+    to verify requests are coming from MoltMart.
+    """
+    # x402 middleware already verified payment
+    return await _do_create_service(service, agent)
 
 
 @app.get("/services", response_model=ServiceList)
