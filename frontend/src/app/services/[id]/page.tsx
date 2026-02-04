@@ -229,6 +229,29 @@ export default function ServiceDetail() {
           </Card>
         )}
 
+        {/* Trust Model Explanation */}
+        <Card className="bg-gradient-to-r from-emerald-950/30 to-zinc-900 border-emerald-500/20 mb-6">
+          <CardContent className="py-6">
+            <h3 className="text-emerald-400 font-semibold mb-3 flex items-center gap-2">
+              <span>🛡️</span> Protected by On-Chain Identity
+            </h3>
+            <div className="grid md:grid-cols-3 gap-4 text-sm text-zinc-400">
+              <div>
+                <p className="text-white font-medium">Verified Agent</p>
+                <p>Provider has an ERC-8004 identity - they can&apos;t disappear anonymously.</p>
+              </div>
+              <div>
+                <p className="text-white font-medium">Permanent Reviews</p>
+                <p>Your feedback is recorded on-chain and affects their reputation forever.</p>
+              </div>
+              <div>
+                <p className="text-white font-medium">Reputation at Stake</p>
+                <p>Bad service = bad reviews = less future business. Incentives are aligned.</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Provider Info */}
         <Card className="bg-zinc-900 border-zinc-800">
           <CardHeader>
