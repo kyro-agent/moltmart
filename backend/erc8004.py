@@ -126,11 +126,22 @@ def register_agent(agent_uri: str, recipient_wallet: str = None) -> dict:
         if recipient_wallet and agent_id is not None:
             try:
                 recipient = Web3.to_checksum_address(recipient_wallet)
-                nonce = w3.eth.get_transaction_count(account.address)
+                
+                # Small delay to let RPC node state propagate after mint confirmation
+                import time
+                time.sleep(2)
+                
+                # Use 'pending' to include any pending transactions in nonce count
+                nonce = w3.eth.get_transaction_count(account.address, 'pending')
+                print(f"🔢 Transfer nonce (pending): {nonce}")
                 
                 # Check operator balance for gas
                 operator_balance = w3.eth.get_balance(account.address)
                 print(f"💰 Operator balance: {w3.from_wei(operator_balance, 'ether')} ETH")
+                
+                # Use slightly higher gas price to avoid "replacement transaction underpriced"
+                current_gas_price = w3.eth.gas_price
+                bumped_gas_price = int(current_gas_price * 1.2)  # 20% bump
                 
                 transfer_tx = identity_registry.functions.transferFrom(
                     account.address,
@@ -140,7 +151,7 @@ def register_agent(agent_uri: str, recipient_wallet: str = None) -> dict:
                     "from": account.address,
                     "nonce": nonce,
                     "gas": 100000,
-                    "gasPrice": w3.eth.gas_price,
+                    "gasPrice": bumped_gas_price,
                     "chainId": BASE_CHAIN_ID,
                 })
                 

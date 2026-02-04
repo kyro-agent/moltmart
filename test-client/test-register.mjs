@@ -21,8 +21,26 @@ const privateKey = fs.readFileSync(keyPath, 'utf8').trim();
 const account = privateKeyToAccount(privateKey);
 console.log(`Wallet: ${account.address}`);
 
+// Create custom fetch that logs requests
+const loggingFetch = async (url, options = {}) => {
+  console.log(`\n📤 Fetch: ${options.method || 'GET'} ${url}`);
+  if (options.headers) {
+    const headers = options.headers;
+    if (headers['payment-signature'] || headers['PAYMENT-SIGNATURE']) {
+      console.log(`   💳 Has payment-signature header`);
+      try {
+        const decoded = Buffer.from(headers['payment-signature'] || headers['PAYMENT-SIGNATURE'], 'base64').toString();
+        console.log(`   📦 Payment (first 300 chars): ${decoded.substring(0, 300)}...`);
+      } catch (e) {}
+    }
+  }
+  const response = await fetch(url, options);
+  console.log(`📥 Response: ${response.status}`);
+  return response;
+};
+
 // Wrap fetch with x402 payment support for Base
-const fetchWithPayment = wrapFetchWithPaymentFromConfig(fetch, {
+const fetchWithPayment = wrapFetchWithPaymentFromConfig(loggingFetch, {
   schemes: [
     {
       network: 'eip155:8453', // Base mainnet
