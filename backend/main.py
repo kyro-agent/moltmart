@@ -56,7 +56,7 @@ from database import (
 from erc8004 import check_connection as check_8004_connection, IDENTITY_REGISTRY, BASE_CHAIN_ID
 
 # ERC-8004 integration
-from erc8004 import get_8004_credentials_simple, get_agent_registry_uri, verify_token_ownership, get_agent_info
+from erc8004 import get_8004_credentials_simple, get_agent_registry_uri, verify_token_ownership, get_agent_info, get_reputation
 from erc8004 import register_agent as mint_8004_identity
 from web3 import Web3
 
@@ -1589,6 +1589,39 @@ async def check_8004_credentials(wallet_address: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error checking credentials: {str(e)}") from e
+
+
+@app.get("/agents/8004/{agent_id}/reputation")
+async def get_agent_reputation(agent_id: int, tag: str = ""):
+    """
+    Get on-chain reputation for an ERC-8004 agent.
+    
+    Returns the cumulative reputation score from the ReputationRegistry contract.
+    Higher scores indicate more positive feedback from service transactions.
+    
+    - **agent_id**: The ERC-8004 token ID
+    - **tag**: Optional tag to filter reputation by category (e.g., "service")
+    
+    Free endpoint - no payment required.
+    """
+    try:
+        rep = get_reputation(agent_id, tag)
+        if "error" in rep:
+            raise HTTPException(status_code=404, detail=rep["error"])
+        
+        return {
+            "agent_id": agent_id,
+            "tag": tag or "all",
+            "feedback_count": rep.get("feedback_count", 0),
+            "reputation_score": rep.get("reputation_score", 0),
+            "decimals": rep.get("decimals", 0),
+            "chain": "Base",
+            "contract": "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching reputation: {str(e)}") from e
 
 
 # ============ SEED DATA ============

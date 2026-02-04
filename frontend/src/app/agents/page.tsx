@@ -105,8 +105,8 @@ export default function AgentsDirectory() {
                       <CardTitle className="text-white flex items-center gap-2">
                         {agent.name}
                         {agent.has_8004 && (
-                          <Badge variant="outline" className="border-emerald-500 text-emerald-400 text-xs">
-                            8004
+                          <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 text-xs font-bold animate-pulse">
+                            ✓ VERIFIED
                           </Badge>
                         )}
                       </CardTitle>

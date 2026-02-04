@@ -48,6 +48,15 @@ interface OnChainProfile {
   };
 }
 
+interface Reputation {
+  agent_id: number;
+  tag: string;
+  feedback_count: number;
+  reputation_score: number;
+  decimals: number;
+  chain: string;
+}
+
 export default function AgentProfile() {
   const params = useParams();
   const wallet = params.wallet as string;
@@ -55,6 +64,7 @@ export default function AgentProfile() {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [services, setServices] = useState<Service[]>([]);
   const [onChainProfile, setOnChainProfile] = useState<OnChainProfile | null>(null);
+  const [reputation, setReputation] = useState<Reputation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,12 +80,19 @@ export default function AgentProfile() {
       .then((data) => {
         setAgent(data);
         
-        // If agent has ERC-8004, fetch on-chain profile
+        // If agent has ERC-8004, fetch on-chain profile and reputation
         if (data.agent_8004_id) {
+          // Fetch profile
           fetch(`${API_URL}/agents/8004/token/${data.agent_8004_id}`)
             .then(res => res.ok ? res.json() : null)
             .then(profile => setOnChainProfile(profile))
             .catch(() => {}); // Silently fail - on-chain data is optional
+          
+          // Fetch reputation
+          fetch(`${API_URL}/agents/8004/${data.agent_8004_id}/reputation`)
+            .then(res => res.ok ? res.json() : null)
+            .then(rep => setReputation(rep))
+            .catch(() => {}); // Silently fail - reputation is optional
         }
         
         // Fetch agent's services
@@ -167,17 +184,33 @@ export default function AgentProfile() {
 
         {/* On-Chain Identity - THE TRUST LAYER */}
         {agent.has_8004 ? (
-          <Card className="mb-8 bg-gradient-to-r from-emerald-950/50 to-zinc-900 border-emerald-500/30">
-            <CardHeader>
-              <CardTitle className="text-emerald-400 flex items-center gap-2">
-                <span className="text-2xl">🛡️</span>
-                On-Chain Verified Identity
-              </CardTitle>
+          <Card className="mb-8 bg-gradient-to-r from-emerald-950/50 via-zinc-900 to-blue-950/30 border-emerald-500/30 overflow-hidden relative">
+            {/* Animated glow effect */}
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-emerald-500/10 via-transparent to-blue-500/5"></div>
+            
+            <CardHeader className="relative">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-emerald-400 flex items-center gap-2">
+                  <span className="text-2xl">🛡️</span>
+                  On-Chain Verified Identity
+                </CardTitle>
+                {/* Trust Score Badge */}
+                <div className="flex items-center gap-2 bg-emerald-500/20 px-4 py-2 rounded-full border border-emerald-500/30">
+                  <span className="text-emerald-400 font-bold text-lg">
+                    {reputation ? (
+                      reputation.feedback_count > 0 
+                        ? `${reputation.reputation_score}` 
+                        : "NEW"
+                    ) : "—"}
+                  </span>
+                  <span className="text-emerald-300/80 text-xs uppercase">Trust Score</span>
+                </div>
+              </div>
               <CardDescription>
-                This agent has a verified ERC-8004 identity on Base. Their reputation is permanently recorded on-chain.
+                Verified ERC-8004 identity on Base. Reputation permanently recorded on-chain.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="relative">
               <div className="flex gap-6">
                 {/* Profile Image from on-chain metadata */}
                 {onChainProfile?.metadata?.image && (
@@ -188,7 +221,7 @@ export default function AgentProfile() {
                         ? onChainProfile.metadata.image.replace("ipfs://", "https://ipfs.io/ipfs/")
                         : onChainProfile.metadata.image}
                       alt={`${agent.name} avatar`}
-                      className="w-24 h-24 rounded-lg border-2 border-emerald-500/30 object-cover"
+                      className="w-24 h-24 rounded-lg border-2 border-emerald-500/30 object-cover shadow-lg shadow-emerald-500/20"
                     />
                   </div>
                 )}
@@ -201,7 +234,7 @@ export default function AgentProfile() {
                         href={onChainProfile?.basescan_url || `https://basescan.org/nft/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432/${agent.agent_8004_id}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-emerald-400 font-mono hover:underline"
+                        className="text-emerald-400 font-mono text-lg font-bold hover:underline"
                       >
                         #{agent.agent_8004_id}
                       </a>
@@ -217,39 +250,98 @@ export default function AgentProfile() {
                     )}
                   </div>
                   <div>
+                    <p className="text-zinc-500 text-xs uppercase">Feedback</p>
+                    <p className="text-white text-lg font-bold">
+                      {reputation ? reputation.feedback_count : "0"} reviews
+                    </p>
+                  </div>
+                  <div>
                     <p className="text-zinc-500 text-xs uppercase">Registered</p>
                     <p className="text-white">{new Date(agent.created_at).toLocaleDateString()}</p>
                   </div>
                   <div>
-                    <p className="text-zinc-500 text-xs uppercase">Identity Registry</p>
-                    <a 
-                      href={`https://basescan.org/address/${onChainProfile?.contract || "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-400 text-sm hover:underline"
-                    >
-                      View Contract ↗
-                    </a>
-                  </div>
-                  <div>
                     <p className="text-zinc-500 text-xs uppercase">Network</p>
-                    <p className="text-white">{onChainProfile?.chain || "Base"}</p>
+                    <p className="text-white flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
+                      {onChainProfile?.chain || "Base"}
+                    </p>
                   </div>
                 </div>
               </div>
-              <div className="mt-4 pt-4 border-t border-zinc-700/50">
+              
+              {/* Reputation Details */}
+              {reputation && reputation.feedback_count > 0 && (
+                <div className="mt-4 pt-4 border-t border-zinc-700/50 flex items-center gap-4">
+                  <div className="flex-1 bg-zinc-800/50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-zinc-400 text-sm">Reputation Progress</span>
+                      <span className="text-emerald-400 font-mono">{reputation.reputation_score}/{reputation.feedback_count * 5}</span>
+                    </div>
+                    <div className="w-full bg-zinc-700 rounded-full h-2">
+                      <div 
+                        className="bg-gradient-to-r from-emerald-500 to-emerald-400 h-2 rounded-full transition-all"
+                        style={{ width: `${Math.min(100, (reputation.reputation_score / (reputation.feedback_count * 5)) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                  <a 
+                    href={`https://basescan.org/address/0x8004BAa17C55a88189AE136b182e5fdA19dE9b63#readContract`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 text-xs hover:underline"
+                  >
+                    View on-chain ↗
+                  </a>
+                </div>
+              )}
+              
+              <div className="mt-4 pt-4 border-t border-zinc-700/50 flex items-start gap-2">
+                <span className="text-lg">💡</span>
                 <p className="text-zinc-400 text-sm">
-                  💡 <strong>Why this matters:</strong> Verified identity means this agent can&apos;t disappear anonymously. 
-                  Bad reviews permanently affect their on-chain reputation, incentivizing good service.
+                  <strong className="text-zinc-300">Accountable by design:</strong> This agent&apos;s identity is an NFT they can&apos;t abandon. 
+                  Every transaction builds (or damages) their permanent on-chain reputation.
                 </p>
+              </div>
+              
+              {/* Contract Links */}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <a 
+                  href={`https://basescan.org/address/${onChainProfile?.contract || "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded hover:bg-zinc-700 transition"
+                >
+                  🆔 Identity Registry
+                </a>
+                <a 
+                  href="https://basescan.org/address/0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded hover:bg-zinc-700 transition"
+                >
+                  ⭐ Reputation Registry
+                </a>
+                <a 
+                  href="https://eips.ethereum.org/EIPS/eip-8004"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded hover:bg-zinc-700 transition"
+                >
+                  📄 ERC-8004 Spec
+                </a>
               </div>
             </CardContent>
           </Card>
         ) : (
-          <Card className="mb-8 bg-zinc-900 border-zinc-700">
-            <CardContent className="py-6">
-              <p className="text-zinc-500 text-center">
-                ⚠️ This agent does not have a verified ERC-8004 identity.
+          <Card className="mb-8 bg-zinc-900 border-zinc-700 border-dashed">
+            <CardContent className="py-8 text-center">
+              <span className="text-4xl mb-4 block">⚠️</span>
+              <p className="text-zinc-400 text-lg mb-2">
+                Unverified Agent
+              </p>
+              <p className="text-zinc-500 text-sm">
+                This agent does not have a verified ERC-8004 on-chain identity.
+                <br />Transactions with unverified agents carry higher risk.
               </p>
             </CardContent>
           </Card>
