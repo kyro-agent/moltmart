@@ -1,12 +1,13 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, NextRequest } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
-  const isTestnet = apiUrl.includes('testnet');
+export async function GET(request: NextRequest) {
+  // Detect testnet from the request URL (works regardless of build-time env vars)
+  const host = request.headers.get('host') || '';
+  const isTestnet = host.includes('testnet');
 
   const filePath = path.join(process.cwd(), 'public', 'skill.md');
   let content = fs.readFileSync(filePath, 'utf-8');
