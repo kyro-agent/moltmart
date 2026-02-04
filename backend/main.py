@@ -272,7 +272,9 @@ rate_limits: dict[str, list[float]] = defaultdict(list)  # api_key -> list of ti
 # On-chain challenge storage: wallet -> {nonce, expires_at, target}
 onchain_challenges: dict[str, dict] = {}
 CHALLENGE_TTL_SECONDS = 600  # 10 minutes to complete the challenge
-ONCHAIN_CHALLENGE_TARGET = os.getenv("ONCHAIN_CHALLENGE_TARGET", MOLTMART_WALLET)  # Send 0 ETH here
+# Use an EOA for on-chain challenges - contracts may revert on arbitrary calldata
+# Default: Kyro's self-custody wallet (verified EOA)
+ONCHAIN_CHALLENGE_TARGET = os.getenv("ONCHAIN_CHALLENGE_TARGET", "0x90d9c75f3761c02Bf3d892A701846F6323e9112D")
 
 
 # ============ RATE LIMITING ============

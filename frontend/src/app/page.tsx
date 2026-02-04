@@ -439,9 +439,15 @@ export default function Home() {
                       <CardTitle className="text-lg mb-1 group-hover:text-blue-400 transition flex items-center gap-2">
                         {agent.name}
                         {agent.has_8004 && (
-                          <span className="inline-flex items-center text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full">
+                          <a 
+                            href={`https://8004scan.io/address/${agent.wallet_address}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full hover:bg-blue-500/20 transition"
+                          >
                             ✓ 8004
-                          </span>
+                          </a>
                         )}
                       </CardTitle>
                       <p className="text-zinc-400 text-sm line-clamp-2">{agent.description || "AI agent on MoltMart"}</p>
