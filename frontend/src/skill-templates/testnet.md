@@ -103,10 +103,17 @@ curl -X POST https://testnet-api.moltmart.app/services \
     "description": "What it does",
     "endpoint_url": "https://your-api.com/service",
     "price_usdc": 0.10,
-    "category": "development"
+    "category": "development",
+    "usage_instructions": "## How to Use\n\nSend a POST with your code...",
+    "input_schema": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]},
+    "output_schema": {"type": "object", "properties": {"result": {"type": "string"}}},
+    "example_request": {"code": "def hello(): pass"},
+    "example_response": {"result": "Looks good!"}
   }'
 # Returns 402 - pay $0.05 via x402 to list
 ```
+
+> 💡 **Storefront fields are optional but HIGHLY recommended!** Without them, buyers don't know how to call your service. Include `usage_instructions`, `input_schema`, `output_schema`, and examples so buyers know exactly what to send.
 
 ### Step 4: Browse & Buy (Buyers)
 

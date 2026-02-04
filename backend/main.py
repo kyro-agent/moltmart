@@ -433,6 +433,12 @@ class ServiceCreate(BaseModel):
     endpoint_url: HttpUrl  # Seller's API endpoint
     price_usdc: float
     category: str
+    # Optional storefront fields - help buyers understand how to use your service
+    usage_instructions: str | None = None  # Markdown: detailed usage guide
+    input_schema: dict | None = None  # JSON Schema for request body
+    output_schema: dict | None = None  # JSON Schema for response
+    example_request: dict | None = None  # Example request body
+    example_response: dict | None = None  # Example response body
 
 
 class Service(BaseModel):
@@ -450,6 +456,12 @@ class Service(BaseModel):
     created_at: datetime
     calls_count: int = 0
     revenue_usdc: float = 0.0
+    # Storefront fields
+    usage_instructions: str | None = None
+    input_schema: dict | None = None
+    output_schema: dict | None = None
+    example_request: dict | None = None
+    example_response: dict | None = None
 
 
 class ServiceResponse(BaseModel):
@@ -465,6 +477,12 @@ class ServiceResponse(BaseModel):
     created_at: datetime
     calls_count: int = 0
     revenue_usdc: float = 0.0
+    # Storefront fields (optional)
+    usage_instructions: str | None = None
+    input_schema: dict | None = None
+    output_schema: dict | None = None
+    example_request: dict | None = None
+    example_response: dict | None = None
 
 
 class ServiceCreateResponse(ServiceResponse):
@@ -505,6 +523,15 @@ def service_to_response(service: Service) -> ServiceResponse:
 
 def db_service_to_response(db_service: ServiceDB) -> ServiceResponse:
     """Convert database service to Pydantic response model"""
+    # Parse JSON strings back to dicts for storefront fields
+    def parse_json_field(value: str | None) -> dict | None:
+        if value:
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return None
+        return None
+    
     return ServiceResponse(
         id=db_service.id,
         name=db_service.name,
@@ -516,6 +543,12 @@ def db_service_to_response(db_service: ServiceDB) -> ServiceResponse:
         created_at=db_service.created_at,
         calls_count=db_service.calls_count or 0,
         revenue_usdc=db_service.revenue_usdc or 0.0,
+        # Storefront fields
+        usage_instructions=db_service.usage_instructions,
+        input_schema=parse_json_field(db_service.input_schema),
+        output_schema=parse_json_field(db_service.output_schema),
+        example_request=parse_json_field(db_service.example_request),
+        example_response=parse_json_field(db_service.example_response),
     )
 
 
@@ -1465,6 +1498,12 @@ class ServiceCreateOnchain(BaseModel):
     price_usdc: float
     category: str
     tx_hash: str  # USDC payment transaction hash
+    # Optional storefront fields
+    usage_instructions: str | None = None
+    input_schema: dict | None = None
+    output_schema: dict | None = None
+    example_request: dict | None = None
+    example_response: dict | None = None
     
     @validator("tx_hash")
     def validate_tx_hash(cls, v):
@@ -1501,6 +1540,12 @@ async def _do_create_service(service_data: ServiceCreate, agent: Agent) -> Servi
         created_at=datetime.utcnow(),
         calls_count=0,
         revenue_usdc=0.0,
+        # Storefront fields (optional)
+        usage_instructions=service_data.usage_instructions,
+        input_schema=json.dumps(service_data.input_schema) if service_data.input_schema else None,
+        output_schema=json.dumps(service_data.output_schema) if service_data.output_schema else None,
+        example_request=json.dumps(service_data.example_request) if service_data.example_request else None,
+        example_response=json.dumps(service_data.example_response) if service_data.example_response else None,
     )
     await create_service(db_service)
 
@@ -1566,6 +1611,12 @@ async def create_service_onchain(
         endpoint_url=service.endpoint_url,
         price_usdc=service.price_usdc,
         category=service.category,
+        # Pass through storefront fields
+        usage_instructions=service.usage_instructions,
+        input_schema=service.input_schema,
+        output_schema=service.output_schema,
+        example_request=service.example_request,
+        example_response=service.example_response,
     )
     
     return await _do_create_service(service_data, agent)

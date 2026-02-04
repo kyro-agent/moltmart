@@ -186,6 +186,12 @@ class ServiceDB(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     calls_count = Column(Integer, default=0)
     revenue_usdc = Column(Float, default=0.0)
+    # Service storefront fields (optional - help buyers understand how to use)
+    usage_instructions = Column(Text, nullable=True)  # Markdown: how to call this service
+    input_schema = Column(Text, nullable=True)  # JSON Schema for request body
+    output_schema = Column(Text, nullable=True)  # JSON Schema for response
+    example_request = Column(Text, nullable=True)  # Example request JSON
+    example_response = Column(Text, nullable=True)  # Example response JSON
 
 
 class TransactionDB(Base):
