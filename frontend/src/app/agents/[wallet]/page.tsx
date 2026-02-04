@@ -196,14 +196,25 @@ export default function AgentProfile() {
                 <div className="flex-1 grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
                     <p className="text-zinc-500 text-xs uppercase">Agent ID</p>
-                    <a 
-                      href={onChainProfile?.basescan_url || `https://basescan.org/nft/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432/${agent.agent_8004_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-emerald-400 font-mono hover:underline"
-                    >
-                      #{agent.agent_8004_id}
-                    </a>
+                    {agent.agent_8004_id ? (
+                      <a 
+                        href={onChainProfile?.basescan_url || `https://basescan.org/nft/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432/${agent.agent_8004_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-400 font-mono hover:underline"
+                      >
+                        #{agent.agent_8004_id}
+                      </a>
+                    ) : (
+                      <a 
+                        href={`https://basescan.org/address/${agent.wallet_address}#nfttransfers`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-emerald-400 hover:underline"
+                      >
+                        ✓ Verified
+                      </a>
+                    )}
                   </div>
                   <div>
                     <p className="text-zinc-500 text-xs uppercase">Registered</p>
