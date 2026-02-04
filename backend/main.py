@@ -50,6 +50,7 @@ from database import (
     get_service,
     get_services,
     init_db,
+    update_service_db,
     update_service_stats,
 )
 from erc8004 import check_connection as check_8004_connection, IDENTITY_REGISTRY, BASE_CHAIN_ID
@@ -1678,6 +1679,80 @@ async def get_service_by_id(request: Request, service_id: str):
     if not db_service:
         raise HTTPException(status_code=404, detail="Service not found")
     return db_service_to_response(db_service)
+
+
+class ServiceUpdate(BaseModel):
+    """Update an existing service (owner only, FREE)"""
+    name: str | None = None
+    description: str | None = None
+    endpoint_url: HttpUrl | None = None
+    price_usdc: float | None = None
+    category: str | None = None
+    # Storefront fields
+    usage_instructions: str | None = None
+    input_schema: dict | None = None
+    output_schema: dict | None = None
+    example_request: dict | None = None
+    example_response: dict | None = None
+
+
+@app.patch("/services/{service_id}", response_model=ServiceResponse)
+async def update_service(
+    service_id: str,
+    update: ServiceUpdate,
+    agent: Agent = Depends(require_agent)
+):
+    """
+    Update your service listing (FREE - you already paid to list).
+    
+    Only the service owner can update. All fields are optional.
+    Use this to add/update storefront details like usage_instructions,
+    input_schema, output_schema, and examples.
+    
+    Requires X-API-Key header.
+    """
+    # Get the service
+    db_service = await get_service(service_id)
+    if not db_service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    # Verify ownership
+    if db_service.provider_wallet.lower() != agent.wallet_address.lower():
+        raise HTTPException(status_code=403, detail="You can only update your own services")
+    
+    # Build update dict with only provided fields
+    update_data = {}
+    if update.name is not None:
+        update_data["name"] = update.name
+    if update.description is not None:
+        update_data["description"] = update.description
+    if update.endpoint_url is not None:
+        update_data["endpoint_url"] = str(update.endpoint_url)
+    if update.price_usdc is not None:
+        update_data["price_usdc"] = update.price_usdc
+    if update.category is not None:
+        update_data["category"] = update.category
+    if update.usage_instructions is not None:
+        update_data["usage_instructions"] = update.usage_instructions
+    if update.input_schema is not None:
+        update_data["input_schema"] = json.dumps(update.input_schema)
+    if update.output_schema is not None:
+        update_data["output_schema"] = json.dumps(update.output_schema)
+    if update.example_request is not None:
+        update_data["example_request"] = json.dumps(update.example_request)
+    if update.example_response is not None:
+        update_data["example_response"] = json.dumps(update.example_response)
+    
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    # Update in database
+    updated = await update_service_db(service_id, update_data)
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update service")
+    
+    print(f"✅ Service {service_id} updated by {agent.name}")
+    return db_service_to_response(updated)
 
 
 @app.get("/services/search/{query}")

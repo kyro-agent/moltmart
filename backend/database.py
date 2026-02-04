@@ -417,6 +417,24 @@ async def create_service(service: ServiceDB) -> ServiceDB:
         return service
 
 
+async def update_service_db(service_id: str, update_data: dict) -> ServiceDB | None:
+    """Update a service with the provided fields."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(ServiceDB).where(ServiceDB.id == service_id)
+        )
+        service = result.scalar_one_or_none()
+        if not service:
+            return None
+        
+        for key, value in update_data.items():
+            setattr(service, key, value)
+        
+        await session.commit()
+        await session.refresh(service)
+        return service
+
+
 async def update_service_stats(
     service_id: str,
     calls_delta: int = 0,
