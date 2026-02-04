@@ -1380,6 +1380,59 @@ async def get_my_agent(agent: Agent = Depends(require_agent)):
     return agent
 
 
+class Update8004Request(BaseModel):
+    agent_8004_id: int
+
+
+@app.patch("/agents/me/8004")
+async def update_my_8004(request: Update8004Request, agent: Agent = Depends(require_agent)):
+    """
+    Update your ERC-8004 token ID.
+    
+    Verifies on-chain that you actually own the token before updating.
+    Use this if your token ID wasn't saved during registration.
+    
+    Requires X-API-Key header.
+    """
+    token_id = request.agent_8004_id
+    
+    # Verify on-chain ownership
+    ownership = verify_token_ownership(token_id, agent.wallet_address)
+    
+    if not ownership.get("verified"):
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Token #{token_id} is not owned by your wallet. Owner: {ownership.get('owner', 'unknown')}"
+        )
+    
+    # Update database
+    from database import get_session
+    from sqlalchemy import update
+    from database import AgentDB
+    
+    async with get_session() as session:
+        await session.execute(
+            update(AgentDB)
+            .where(AgentDB.wallet_address == agent.wallet_address.lower())
+            .values(
+                has_8004=True,
+                agent_8004_id=token_id,
+                agent_8004_registry=f"eip155:{BASE_CHAIN_ID}:{IDENTITY_REGISTRY}",
+                scan_url=f"https://basescan.org/nft/{IDENTITY_REGISTRY}/{token_id}"
+            )
+        )
+        await session.commit()
+    
+    print(f"✅ Agent {agent.name} updated ERC-8004 to #{token_id}")
+    
+    return {
+        "success": True,
+        "message": f"Updated ERC-8004 token ID to #{token_id}",
+        "agent_8004_id": token_id,
+        "scan_url": f"https://basescan.org/nft/{IDENTITY_REGISTRY}/{token_id}"
+    }
+
+
 @app.get("/agents/{agent_id}/profile.json")
 async def get_agent_profile_json(agent_id: str, request: Request):
     """
