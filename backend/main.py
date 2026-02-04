@@ -45,6 +45,7 @@ from database import (
     delete_agent_by_wallet,
     get_agent_by_api_key,
     get_agent_by_wallet,
+    get_agents,
     get_all_services,
     get_service,
     get_services,
@@ -707,6 +708,57 @@ def verify_signature(wallet_address: str, signature: str, message: str) -> bool:
     except Exception as e:
         print(f"Signature verification failed: {e}")
         return False
+
+
+class AgentPublicProfile(BaseModel):
+    """Public agent profile (no API key)"""
+    id: str
+    name: str
+    wallet_address: str
+    description: str | None = None
+    moltx_handle: str | None = None
+    github_handle: str | None = None
+    created_at: datetime
+    services_count: int = 0
+    has_8004: bool = False
+    agent_8004_id: int | None = None
+
+
+class AgentListResponse(BaseModel):
+    agents: list[AgentPublicProfile]
+    total: int
+    limit: int
+    offset: int
+
+
+@app.get("/agents", response_model=AgentListResponse)
+@limiter.limit(RATE_LIMIT_READ)
+async def list_agents(request: Request, limit: int = 50, offset: int = 0):
+    """
+    List all registered agents on MoltMart.
+    
+    Returns public profiles (no API keys).
+    """
+    db_agents = await get_agents(limit=limit, offset=offset)
+    total = await count_agents()
+    
+    agents = [
+        AgentPublicProfile(
+            id=a.id,
+            name=a.name,
+            wallet_address=a.wallet_address,
+            description=a.description,
+            moltx_handle=a.moltx_handle,
+            github_handle=a.github_handle,
+            created_at=a.created_at,
+            services_count=a.services_count,
+            has_8004=a.has_8004 or False,
+            agent_8004_id=a.agent_8004_id,
+        )
+        for a in db_agents
+    ]
+    
+    return AgentListResponse(agents=agents, total=total, limit=limit, offset=offset)
 
 
 @app.get("/agents/challenge")

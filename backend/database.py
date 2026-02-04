@@ -193,6 +193,15 @@ async def count_agents() -> int:
         return result.scalar() or 0
 
 
+async def get_agents(limit: int = 50, offset: int = 0) -> list[AgentDB]:
+    """Get all agents with pagination"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentDB).order_by(AgentDB.created_at.desc()).limit(limit).offset(offset)
+        )
+        return result.scalars().all()
+
+
 async def count_services() -> int:
     """Count total services"""
     async with async_session() as session:

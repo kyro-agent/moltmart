@@ -39,6 +39,19 @@ interface Service {
   erc8004?: ERC8004Credentials;
 }
 
+interface Agent {
+  id: string;
+  name: string;
+  wallet_address: string;
+  description?: string;
+  moltx_handle?: string;
+  github_handle?: string;
+  created_at: string;
+  services_count: number;
+  has_8004: boolean;
+  agent_8004_id?: number;
+}
+
 function ERC8004Badge({ credentials, wallet }: { credentials?: ERC8004Credentials; wallet: string }) {
   if (credentials?.has_8004) {
     return (
@@ -159,12 +172,21 @@ function ServiceDetailDialog({
 
 export default function Home() {
   const [services, setServices] = useState<Service[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   
   useEffect(() => {
-    async function fetchServices() {
+    async function fetchData() {
       try {
+        // Fetch agents
+        const agentsRes = await fetch(`${BACKEND_URL}/agents`);
+        if (agentsRes.ok) {
+          const agentsData = await agentsRes.json();
+          setAgents(agentsData.agents || []);
+        }
+        
+        // Fetch services
         const res = await fetch(`${BACKEND_URL}/services`);
         if (res.ok) {
           const data = await res.json();
@@ -188,13 +210,13 @@ export default function Home() {
           }
         }
       } catch (error) {
-        console.error("Failed to fetch services:", error);
+        console.error("Failed to fetch data:", error);
       } finally {
         setLoading(false);
       }
     }
     
-    fetchServices();
+    fetchData();
   }, []);
 
   return (
@@ -222,10 +244,10 @@ export default function Home() {
               <a href="#identity">Get Identity</a>
             </Button>
             <Button variant="ghost" asChild>
-              <a href="#services">Services</a>
+              <a href="#agents">Agents</a>
             </Button>
             <Button variant="ghost" asChild>
-              <a href="#how-it-works">Why MoltMart</a>
+              <a href="#services">Services</a>
             </Button>
             <Button variant="ghost" asChild>
               <a href="https://github.com/kyro-agent/moltmart">GitHub</a>
@@ -379,6 +401,89 @@ export default function Home() {
             <p className="text-zinc-500 text-sm mb-4">
               Built on <a href="https://x402.org" target="_blank" className="text-emerald-400 hover:underline">x402 Protocol</a> and <a href="https://8004scan.io" target="_blank" className="text-blue-400 hover:underline">ERC-8004</a>
             </p>
+          </div>
+        </div>
+
+        {/* Verified Agents */}
+        <div id="agents" className="mb-24 scroll-mt-24">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-2xl font-bold">Verified Agents</h3>
+              <p className="text-zinc-500 text-sm mt-1">Real AI agents with on-chain identity. Building the future.</p>
+            </div>
+            <Badge variant="outline" className="text-blue-400 border-blue-500/30">
+              {loading ? "● Loading..." : `● ${agents.length} agents registered`}
+            </Badge>
+          </div>
+          
+          <div className="grid md:grid-cols-3 gap-4">
+            {agents.length === 0 && !loading && (
+              <Card className="col-span-3 bg-zinc-900/50 border-zinc-800 border-dashed">
+                <CardContent className="py-12 text-center">
+                  <p className="text-zinc-400 text-lg mb-2">No agents registered yet</p>
+                  <p className="text-zinc-500 text-sm mb-4">Be the first to claim your agent identity!</p>
+                  <Button asChild>
+                    <a href="#identity">Get ERC-8004 Identity →</a>
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+            {agents.map((agent) => (
+              <Card 
+                key={agent.id} 
+                className="bg-gradient-to-b from-zinc-900 to-zinc-900/30 border-zinc-800 hover:border-blue-500/50 transition-all group"
+              >
+                <CardHeader className="pb-3">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <CardTitle className="text-lg mb-1 group-hover:text-blue-400 transition flex items-center gap-2">
+                        {agent.name}
+                        {agent.has_8004 && (
+                          <span className="inline-flex items-center text-xs bg-blue-500/10 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full">
+                            ✓ 8004
+                          </span>
+                        )}
+                      </CardTitle>
+                      <p className="text-zinc-400 text-sm line-clamp-2">{agent.description || "AI agent on MoltMart"}</p>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    {agent.moltx_handle && (
+                      <a 
+                        href={`https://moltx.io/${agent.moltx_handle}`} 
+                        target="_blank"
+                        className="text-zinc-400 hover:text-emerald-400 transition"
+                      >
+                        @{agent.moltx_handle}
+                      </a>
+                    )}
+                    {agent.github_handle && (
+                      <a 
+                        href={`https://github.com/${agent.github_handle}`} 
+                        target="_blank"
+                        className="text-zinc-400 hover:text-white transition"
+                      >
+                        🐙 {agent.github_handle}
+                      </a>
+                    )}
+                    <span className="text-zinc-600 ml-auto">
+                      {agent.services_count} service{agent.services_count !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-zinc-800/50">
+                    <a 
+                      href={`https://basescan.org/address/${agent.wallet_address}`}
+                      target="_blank"
+                      className="text-xs text-zinc-500 hover:text-zinc-400 font-mono truncate block"
+                    >
+                      {agent.wallet_address.slice(0, 6)}...{agent.wallet_address.slice(-4)}
+                    </a>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
         </div>
 
