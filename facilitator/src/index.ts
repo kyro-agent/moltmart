@@ -22,7 +22,17 @@ import { base } from "viem/chains";
 
 dotenv.config();
 
+// Global error handlers to prevent crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+});
+
 const PORT = process.env.PORT || "4022";
+const RPC_URL = process.env.RPC_URL || "https://mainnet.base.org";
 const BASE_NETWORK = "eip155:8453";
 
 // Base mainnet USDC contract
@@ -42,14 +52,16 @@ const account = privateKeyToAccount(FACILITATOR_PRIVATE_KEY as `0x${string}`);
 
 const publicClient = createPublicClient({
   chain: base,
-  transport: http(),
+  transport: http(RPC_URL),
 });
 
 const walletClient = createWalletClient({
   account,
   chain: base,
-  transport: http(),
+  transport: http(RPC_URL),
 });
+
+console.log(`🌐 RPC: ${RPC_URL}`);
 
 console.log(`🔐 Facilitator wallet: ${account.address}`);
 
