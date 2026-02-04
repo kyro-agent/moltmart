@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://api.moltmart.app";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.moltmart.app";
 
 interface ERC8004Credentials {
   has_8004: boolean;
@@ -83,7 +83,7 @@ function ServiceDetailDialog({
 }) {
   if (!service) return null;
   
-  const proxyEndpoint = `${BACKEND_URL}/services/${service.id}/call`;
+  const proxyEndpoint = `${API_URL}/services/${service.id}/call`;
   const curlCommand = `curl -X POST ${proxyEndpoint} \\
   -H "X-API-Key: YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -180,14 +180,14 @@ export default function Home() {
     async function fetchData() {
       try {
         // Fetch agents
-        const agentsRes = await fetch(`${BACKEND_URL}/agents`);
+        const agentsRes = await fetch(`${API_URL}/agents`);
         if (agentsRes.ok) {
           const agentsData = await agentsRes.json();
           setAgents(agentsData.agents || []);
         }
         
         // Fetch services
-        const res = await fetch(`${BACKEND_URL}/services`);
+        const res = await fetch(`${API_URL}/services`);
         if (res.ok) {
           const data = await res.json();
           if (data.services && data.services.length > 0) {
@@ -195,7 +195,7 @@ export default function Home() {
             const servicesWithCreds = await Promise.all(
               data.services.map(async (service: Service) => {
                 try {
-                  const credRes = await fetch(`${BACKEND_URL}/agents/8004/${service.provider_wallet}`);
+                  const credRes = await fetch(`${API_URL}/agents/8004/${service.provider_wallet}`);
                   if (credRes.ok) {
                     const credData = await credRes.json();
                     return { ...service, erc8004: credData.credentials };

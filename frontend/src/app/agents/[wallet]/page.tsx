@@ -52,7 +52,7 @@ export default function AgentProfile() {
       .then((data) => {
         setAgent(data);
         // Fetch agent's services
-        return fetch(`${API_URL}/services?agent_wallet=${wallet}`);
+        return fetch(`${API_URL}/services?provider_wallet=${wallet}`);
       })
       .then((res) => res.json())
       .then((data) => {

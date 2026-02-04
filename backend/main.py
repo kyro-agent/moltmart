@@ -57,6 +57,7 @@ from erc8004 import check_connection as check_8004_connection
 # ERC-8004 integration
 from erc8004 import get_8004_credentials_simple, get_agent_registry_uri, verify_token_ownership
 from erc8004 import register_agent as mint_8004_identity
+from web3 import Web3
 
 app = FastAPI(
     title="MoltMart API",
@@ -1580,18 +1581,21 @@ async def create_service_endpoint(service: ServiceCreate, agent: Agent = Depends
 async def list_services(
     request: Request,
     category: str | None = None,
+    provider_wallet: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ):
-    """List all services, optionally filtered by category (rate limited: 120/min)"""
-    db_services = await get_services(category=category, limit=limit, offset=offset)
+    """List all services, optionally filtered by category or provider wallet (rate limited: 120/min)"""
+    db_services = await get_services(category=category, provider_wallet=provider_wallet, limit=limit, offset=offset)
     all_db_services = await get_all_services()
 
-    # Filter by category for total count if needed
+    # Filter for total count
+    filtered = all_db_services
     if category:
-        total = len([s for s in all_db_services if s.category.lower() == category.lower()])
-    else:
-        total = len(all_db_services)
+        filtered = [s for s in filtered if s.category.lower() == category.lower()]
+    if provider_wallet:
+        filtered = [s for s in filtered if s.provider_wallet.lower() == provider_wallet.lower()]
+    total = len(filtered)
 
     return ServiceList(
         services=[db_service_to_response(s) for s in db_services],
