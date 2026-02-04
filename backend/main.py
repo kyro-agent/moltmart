@@ -681,11 +681,50 @@ async def mint_identity(mint_request: IdentityMintRequest, request: Request):
             tx_hash = mint_result.get("tx_hash")
             transfer_tx = mint_result.get("transfer_tx_hash")
             owner = mint_result.get("owner")
+            costs = mint_result.get("costs", {})
             scan_url = f"https://basescan.org/tx/{tx_hash}" if tx_hash else None
             print(f"✅ Minted ERC-8004 identity #{agent_8004_id} for {wallet}")
             print(f"   Mint TX: {tx_hash}")
             print(f"   Transfer TX: {transfer_tx}")
             print(f"   Owner: {owner}")
+            print(f"   Costs: {costs}")
+
+            # Log mint costs to database for unit economics tracking
+            if costs:
+                try:
+                    from database import MintCostDB, log_mint_cost
+                    import uuid
+                    
+                    # Estimate ETH price (rough - could use oracle later)
+                    eth_price_usd = 2500.0  # TODO: fetch real price
+                    total_cost_eth = costs.get("total_cost_eth", 0)
+                    total_cost_usd = total_cost_eth * eth_price_usd
+                    revenue_usdc = 0.05  # What we charged
+                    profit_usd = revenue_usdc - total_cost_usd
+                    
+                    mint_cost = MintCostDB(
+                        id=str(uuid.uuid4()),
+                        recipient_wallet=wallet,
+                        agent_id=agent_8004_id,
+                        revenue_usdc=revenue_usdc,
+                        mint_tx_hash=tx_hash,
+                        mint_gas_used=costs.get("mint_gas_used"),
+                        mint_gas_price_wei=costs.get("mint_gas_price_wei"),
+                        mint_cost_eth=costs.get("mint_cost_eth"),
+                        transfer_tx_hash=transfer_tx,
+                        transfer_gas_used=costs.get("transfer_gas_used"),
+                        transfer_gas_price_wei=costs.get("transfer_gas_price_wei"),
+                        transfer_cost_eth=costs.get("transfer_cost_eth"),
+                        total_cost_eth=total_cost_eth,
+                        total_cost_usd=total_cost_usd,
+                        profit_usd=profit_usd,
+                        eth_price_usd=eth_price_usd,
+                        status="completed",
+                    )
+                    await log_mint_cost(mint_cost)
+                    print(f"   📊 Logged: cost=${total_cost_usd:.4f}, profit=${profit_usd:.4f}")
+                except Exception as e:
+                    print(f"   ⚠️ Failed to log mint cost: {e}")
 
             return IdentityMintResponse(
                 success=True,
@@ -1702,6 +1741,37 @@ async def admin_delete_agent(wallet: str, x_admin_key: str = Header(None)):
     if deleted:
         return {"status": "deleted", "wallet": wallet}
     raise HTTPException(status_code=404, detail="Agent not found")
+
+
+@app.get("/admin/economics")
+async def admin_get_economics(x_admin_key: str = Header(None)):
+    """
+    Get unit economics data for ERC-8004 minting.
+    Shows total revenue, costs, and profit from identity minting.
+    """
+    admin_key = os.getenv("ADMIN_KEY", "test-admin-key")
+    if x_admin_key != admin_key:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    from database import get_mint_economics, get_recent_mints
+
+    economics = await get_mint_economics()
+    recent = await get_recent_mints(limit=10)
+
+    return {
+        "summary": economics,
+        "recent_mints": [
+            {
+                "recipient": m.recipient_wallet[:10] + "...",
+                "agent_id": m.agent_id,
+                "revenue_usd": m.revenue_usdc,
+                "cost_usd": m.total_cost_usd,
+                "profit_usd": m.profit_usd,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in recent
+        ],
+    }
 
 
 if __name__ == "__main__":

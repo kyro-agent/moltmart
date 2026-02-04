@@ -180,13 +180,38 @@ def register_agent(agent_uri: str, recipient_wallet: str = None) -> dict:
                 "stuck_on": account.address
             }
 
+        # Calculate costs for tracking
+        mint_gas_used = receipt.gasUsed
+        mint_gas_price = receipt.effectiveGasPrice
+        mint_cost_eth = float(w3.from_wei(mint_gas_used * mint_gas_price, 'ether'))
+        
+        transfer_gas_used = 0
+        transfer_gas_price = 0
+        transfer_cost_eth = 0.0
+        if transfer_tx_hash:
+            transfer_gas_used = transfer_receipt.gasUsed
+            transfer_gas_price = transfer_receipt.effectiveGasPrice
+            transfer_cost_eth = float(w3.from_wei(transfer_gas_used * transfer_gas_price, 'ether'))
+        
+        total_cost_eth = mint_cost_eth + transfer_cost_eth
+        
         return {
             "success": True,
             "agent_id": agent_id,
             "tx_hash": tx_hash.hex(),
             "transfer_tx_hash": transfer_tx_hash.hex() if transfer_tx_hash else None,
             "block": receipt.blockNumber,
-            "owner": recipient_wallet or account.address
+            "owner": recipient_wallet or account.address,
+            # Cost tracking data
+            "costs": {
+                "mint_gas_used": mint_gas_used,
+                "mint_gas_price_wei": str(mint_gas_price),
+                "mint_cost_eth": mint_cost_eth,
+                "transfer_gas_used": transfer_gas_used,
+                "transfer_gas_price_wei": str(transfer_gas_price),
+                "transfer_cost_eth": transfer_cost_eth,
+                "total_cost_eth": total_cost_eth,
+            }
         }
 
     except Exception as e:

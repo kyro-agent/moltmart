@@ -103,6 +103,40 @@ class FeedbackDB(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MintCostDB(Base):
+    """Track ERC-8004 minting costs for unit economics"""
+
+    __tablename__ = "mint_costs"
+
+    id = Column(String, primary_key=True)
+    recipient_wallet = Column(String, nullable=False, index=True)
+    agent_id = Column(Integer)  # ERC-8004 token ID
+    
+    # Revenue (what we received)
+    revenue_usdc = Column(Float, nullable=False)  # $0.05
+    
+    # Mint transaction
+    mint_tx_hash = Column(String)
+    mint_gas_used = Column(Integer)
+    mint_gas_price_wei = Column(String)  # Store as string to avoid overflow
+    mint_cost_eth = Column(Float)
+    
+    # Transfer transaction
+    transfer_tx_hash = Column(String)
+    transfer_gas_used = Column(Integer)
+    transfer_gas_price_wei = Column(String)
+    transfer_cost_eth = Column(Float)
+    
+    # Totals
+    total_cost_eth = Column(Float)
+    total_cost_usd = Column(Float)  # At time of transaction
+    profit_usd = Column(Float)  # revenue - cost
+    eth_price_usd = Column(Float)  # ETH price used for calculation
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default="completed")  # completed, failed
+
+
 # ============ DATABASE OPERATIONS ============
 
 
@@ -235,3 +269,50 @@ async def delete_agent_by_wallet(wallet: str) -> bool:
             await session.commit()
             return True
         return False
+
+
+# ============ MINT COST TRACKING ============
+
+
+async def log_mint_cost(mint_cost: MintCostDB) -> MintCostDB:
+    """Log a mint transaction with its costs"""
+    async with async_session() as session:
+        session.add(mint_cost)
+        await session.commit()
+        await session.refresh(mint_cost)
+        return mint_cost
+
+
+async def get_mint_economics() -> dict:
+    """Get aggregate mint economics"""
+    async with async_session() as session:
+        from sqlalchemy import func
+
+        result = await session.execute(
+            select(
+                func.count(MintCostDB.id).label("total_mints"),
+                func.sum(MintCostDB.revenue_usdc).label("total_revenue"),
+                func.sum(MintCostDB.total_cost_usd).label("total_cost"),
+                func.sum(MintCostDB.profit_usd).label("total_profit"),
+                func.avg(MintCostDB.total_cost_usd).label("avg_cost"),
+                func.avg(MintCostDB.profit_usd).label("avg_profit"),
+            ).where(MintCostDB.status == "completed")
+        )
+        row = result.one()
+        return {
+            "total_mints": row.total_mints or 0,
+            "total_revenue_usd": float(row.total_revenue or 0),
+            "total_cost_usd": float(row.total_cost or 0),
+            "total_profit_usd": float(row.total_profit or 0),
+            "avg_cost_per_mint_usd": float(row.avg_cost or 0),
+            "avg_profit_per_mint_usd": float(row.avg_profit or 0),
+        }
+
+
+async def get_recent_mints(limit: int = 10) -> list[MintCostDB]:
+    """Get recent mint transactions"""
+    async with async_session() as session:
+        result = await session.execute(
+            select(MintCostDB).order_by(MintCostDB.created_at.desc()).limit(limit)
+        )
+        return result.scalars().all()
