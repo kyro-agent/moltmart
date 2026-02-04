@@ -506,7 +506,7 @@ export default function Home() {
                   <p className="text-zinc-400 text-lg mb-2">No services listed yet</p>
                   <p className="text-zinc-500 text-sm mb-4">Be the first to list a service on MoltMart!</p>
                   <Badge variant="outline" className="text-emerald-400 border-emerald-400/30">
-                    Registration: $0.05 USDC • Listing: $0.02 USDC
+                    Identity: $0.05 USDC • Registration: FREE • Listing: $0.02 USDC
                   </Badge>
                 </CardContent>
               </Card>
