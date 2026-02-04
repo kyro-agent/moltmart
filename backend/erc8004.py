@@ -358,28 +358,36 @@ async def get_8004_credentials_simple(wallet_address: str) -> dict | None:
         agent_id = None
         try:
             # Get Transfer events where 'to' is this wallet
-            # Filter from a reasonable block range (last ~1 month on Base = ~1.3M blocks)
+            # Use get_logs which is more universally supported than create_filter
             current_block = w3.eth.block_number
-            from_block = max(0, current_block - 1_300_000)  # ~1 month of blocks
+            from_block = max(0, current_block - 500_000)  # ~1 week of blocks on Base
             
-            transfer_filter = identity_registry.events.Transfer.create_filter(
+            # Query logs directly (more reliable than filters)
+            events = identity_registry.events.Transfer.get_logs(
                 from_block=from_block,
                 to_block='latest',
                 argument_filters={'to': wallet}
             )
-            events = transfer_filter.get_all_entries()
+            
+            print(f"🔍 Found {len(events)} Transfer events for {wallet}")
             
             if events:
                 # Get the most recent transfer to this wallet
                 latest_event = events[-1]
                 agent_id = latest_event.args.tokenId
+                print(f"📝 Most recent transfer: tokenId={agent_id}")
                 
                 # Verify this wallet still owns this token
                 current_owner = identity_registry.functions.ownerOf(agent_id).call()
                 if current_owner.lower() != wallet.lower():
+                    print(f"⚠️ Token {agent_id} no longer owned by {wallet}")
                     agent_id = None  # Token was transferred away
+                else:
+                    print(f"✅ Verified ownership of token {agent_id}")
         except Exception as e:
-            print(f"Could not fetch agent_id via events: {e}")
+            print(f"❌ Could not fetch agent_id via events: {e}")
+            import traceback
+            traceback.print_exc()
             # Continue without agent_id - balance check still valid
 
         return {
