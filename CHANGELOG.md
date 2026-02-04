@@ -10,6 +10,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - Listing price shown as $0.02 in frontend and skill docs, now correctly shows $0.05
+- "Try Testnet" link in header now clickable (was merged with logo link)
 
 ---
 
