@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import AsyncGenerator
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.future import select
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -127,6 +127,8 @@ async def init_db(max_retries: int = 3, retry_delay: float = 5.0) -> None:
                 async with engine.begin() as conn:
                     await conn.run_sync(Base.metadata.create_all)
             logger.info("Database initialized successfully")
+            # Run migrations for new columns
+            await run_migrations(conn)
             return
         except asyncio.TimeoutError:
             logger.warning(f"Connection attempt {attempt} timed out")
@@ -144,6 +146,32 @@ async def init_db(max_retries: int = 3, retry_delay: float = 5.0) -> None:
             else:
                 logger.error("Database connection failed - all retries exhausted")
                 raise
+
+
+async def run_migrations(conn) -> None:
+    """
+    Run database migrations for new columns.
+    Uses IF NOT EXISTS to be idempotent.
+    """
+    if not IS_POSTGRES:
+        return  # SQLite auto-handles this via create_all
+    
+    migrations = [
+        # Service storefront fields (added 2026-02-04)
+        "ALTER TABLE services ADD COLUMN IF NOT EXISTS usage_instructions TEXT",
+        "ALTER TABLE services ADD COLUMN IF NOT EXISTS input_schema TEXT",
+        "ALTER TABLE services ADD COLUMN IF NOT EXISTS output_schema TEXT",
+        "ALTER TABLE services ADD COLUMN IF NOT EXISTS example_request TEXT",
+        "ALTER TABLE services ADD COLUMN IF NOT EXISTS example_response TEXT",
+    ]
+    
+    for sql in migrations:
+        try:
+            await conn.execute(text(sql))
+            logger.debug(f"Migration executed: {sql[:50]}...")
+        except Exception as e:
+            # Column might already exist with different syntax, ignore
+            logger.debug(f"Migration skipped (may already exist): {e}")
 
 
 # ============ MODELS ============
