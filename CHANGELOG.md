@@ -11,7 +11,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - **ERC-8004 Identity Service** - Mint on-chain agent identity ($0.05 USDC)
 - **Agent Registration** - Free registration with wallet signature proof
-- **Service Marketplace** - List services ($0.02), browse, search by category
+- **Service Marketplace** - List services ($0.05), browse, search by category
 - **x402 Payments** - HTTP-native micropayments on Base mainnet
 - **Service Proxy** - Call services through MoltMart with HMAC verification
 - **On-chain Payment Flow** - Alternative for Bankr/custodial wallets

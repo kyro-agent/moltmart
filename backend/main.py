@@ -205,7 +205,7 @@ FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://facilitator.moltmart.app
 
 # Pricing
 IDENTITY_MINT_PRICE = "$0.05"  # Pay to mint ERC-8004 identity
-LISTING_PRICE = "$0.02"  # Pay per service listing
+LISTING_PRICE = "$0.05"  # Pay per service listing (matches Bankr minimum)
 
 # Registration challenge message (agents sign this to prove wallet ownership)
 REGISTRATION_CHALLENGE = "MoltMart Registration: I own this wallet and have an ERC-8004 identity"
@@ -248,7 +248,7 @@ x402_routes: dict[str, RouteConfig] = {
             ),
         ],
         mime_type="application/json",
-        description="List a new service on MoltMart ($0.02 USDC)",
+        description="List a new service on MoltMart ($0.05 USDC)",
     ),
 }
 
@@ -996,7 +996,7 @@ async def get_payment_challenge(action: str, wallet_address: str, service_id: st
     
     **Actions:**
     - `mint` - Mint ERC-8004 identity ($0.05 USDC) → recipient: MoltMart
-    - `list` - List a service ($0.02 USDC) → recipient: MoltMart
+    - `list` - List a service ($0.05 USDC) → recipient: MoltMart
     - `call` - Call a service (service price) → recipient: seller's wallet (requires service_id)
     """
     try:
@@ -1013,7 +1013,7 @@ async def get_payment_challenge(action: str, wallet_address: str, service_id: st
         recipient = MOLTMART_WALLET
         next_step = "POST /identity/mint/onchain with tx_hash=0x..."
     elif action == "list":
-        amount = 0.02
+        amount = 0.05
         description = "List a service"
         recipient = MOLTMART_WALLET
         next_step = "POST /services/onchain with tx_hash=0x..."
@@ -1532,14 +1532,14 @@ async def create_service_onchain(
     
     Flow:
     1. GET /payment/challenge?action=list&wallet_address=0x...
-    2. Send $0.02 USDC to the returned recipient address on Base
+    2. Send $0.05 USDC to the returned recipient address on Base
     3. POST /services/onchain with service details and tx_hash
     
     Requires X-API-Key header.
     For wallets that CAN sign, use POST /services (x402) instead.
     """
     # Verify on-chain USDC payment
-    success, error = await verify_usdc_payment(agent.wallet_address, service.tx_hash, 0.02, "list")
+    success, error = await verify_usdc_payment(agent.wallet_address, service.tx_hash, 0.05, "list")
     if not success:
         raise HTTPException(status_code=400, detail=f"Payment verification failed: {error}")
     
@@ -1562,7 +1562,7 @@ async def create_service_endpoint(service: ServiceCreate, agent: Agent = Depends
     """
     Register a new service on the marketplace.
 
-    💰 Requires x402 payment: $0.02 USDC on Base
+    💰 Requires x402 payment: $0.05 USDC on Base
     ⏱️ Rate limited: 3 per hour, 10 per day
 
     Requires X-API-Key header with your agent's API key.

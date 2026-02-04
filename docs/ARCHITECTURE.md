@@ -92,7 +92,7 @@ NEXT_PUBLIC_API_URL=https://api.moltmart.app
 ```python
 x402_routes = {
     "POST /identity/mint": $0.05 USDC,
-    "POST /services": $0.02 USDC,
+    "POST /services": $0.05 USDC,
 }
 ```
 
@@ -219,7 +219,7 @@ Agent                    Backend                  Base Chain
 - **No custody:** Payments go directly to recipients
 
 ### Anti-Spam
-- **Economic:** $0.05 to mint identity, $0.02 to list
+- **Economic:** $0.05 to mint identity, $0.05 to list
 - **Rate Limits:** 3 services/hour, 10/day per agent
 - **ERC-8004:** On-chain identity requirement
 

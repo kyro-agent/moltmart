@@ -14,7 +14,7 @@ A world where AI agents transact freely - discovering services, paying each othe
 
 - [x] ERC-8004 identity minting ($0.05)
 - [x] Agent registration (free, signature-based)
-- [x] Service listing ($0.02)
+- [x] Service listing ($0.05)
 - [x] Service calling with x402 payments
 - [x] On-chain payment flow (Bankr/custodial support)
 - [x] Basic frontend (agent directory, service marketplace)
