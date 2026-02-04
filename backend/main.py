@@ -278,6 +278,15 @@ CHALLENGE_TTL_SECONDS = 600  # 10 minutes to complete the challenge
 # Default: Kyro's self-custody wallet (verified EOA)
 ONCHAIN_CHALLENGE_TARGET = os.getenv("ONCHAIN_CHALLENGE_TARGET", "0x90d9c75f3761c02Bf3d892A701846F6323e9112D")
 
+# On-chain PAYMENT challenge storage: wallet -> {nonce, amount, action, expires_at}
+# For Bankr/custodial wallets that can send USDC but can't sign x402
+payment_challenges: dict[str, dict] = {}
+PAYMENT_CHALLENGE_TTL_SECONDS = 600  # 10 minutes to complete payment
+
+# USDC contract on Base mainnet
+USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+USDC_DECIMALS = 6
+
 
 # ============ RATE LIMITING ============
 
@@ -359,12 +368,22 @@ class IdentityMintRequest(BaseModel):
     """Request to mint ERC-8004 identity"""
 
     wallet_address: str
+    tx_hash: str | None = None  # For on-chain payment (Bankr/custodial wallets)
 
     @validator("wallet_address")
     def validate_eth_address(cls, v):
         """Validate Ethereum address format"""
         if not re.match(r"^0x[a-fA-F0-9]{40}$", v):
             raise ValueError("Invalid Ethereum address format")
+        return v.lower()
+    
+    @validator("tx_hash")
+    def validate_tx_hash(cls, v):
+        """Validate transaction hash format"""
+        if v is None:
+            return v
+        if not re.match(r"^0x[a-fA-F0-9]{64}$", v):
+            raise ValueError("Invalid transaction hash format")
         return v.lower()
 
 
@@ -636,22 +655,9 @@ async def debug_mint_test(mint_request: IdentityMintRequest):
 # ============ ERC-8004 IDENTITY SERVICE (x402 PROTECTED) ============
 
 
-@app.post("/identity/mint", response_model=IdentityMintResponse)
-async def mint_identity(mint_request: IdentityMintRequest, request: Request):
-    """
-    Mint an ERC-8004 identity NFT on Base mainnet.
-
-    💰 Requires x402 payment: $0.05 USDC on Base
-
-    This gives you an on-chain AI agent identity that you can use to:
-    - Register on MoltMart (required)
-    - Build on-chain reputation
-    - Prove you're a real AI agent, not a script
-
-    After minting, use /agents/register to complete your MoltMart registration.
-    """
-    wallet = mint_request.wallet_address.lower()
-
+async def _do_mint_identity(wallet: str, request: Request) -> IdentityMintResponse:
+    """Internal function to mint ERC-8004 identity (used by both x402 and on-chain payment endpoints)"""
+    
     # Check if already has ERC-8004
     try:
         creds = await get_8004_credentials_simple(wallet)
@@ -670,7 +676,7 @@ async def mint_identity(mint_request: IdentityMintRequest, request: Request):
     base_url = str(request.base_url).rstrip("/")
     agent_uri = f"{base_url}/identity/{wallet}/profile.json"
 
-    # Mint the identity and transfer to user's wallet (run in thread pool to avoid blocking)
+    # Mint the identity and transfer to user's wallet
     import asyncio
     from functools import partial
 
@@ -697,11 +703,10 @@ async def mint_identity(mint_request: IdentityMintRequest, request: Request):
                     from database import MintCostDB, log_mint_cost
                     import uuid
                     
-                    # Estimate ETH price (rough - could use oracle later)
-                    eth_price_usd = 2500.0  # TODO: fetch real price
+                    eth_price_usd = 2500.0
                     total_cost_eth = costs.get("total_cost_eth", 0)
                     total_cost_usd = total_cost_eth * eth_price_usd
-                    revenue_usdc = 0.05  # What we charged
+                    revenue_usdc = 0.05
                     profit_usd = revenue_usdc - total_cost_usd
                     
                     mint_cost = MintCostDB(
@@ -750,6 +755,73 @@ async def mint_identity(mint_request: IdentityMintRequest, request: Request):
             wallet_address=wallet,
             error=str(e),
         )
+
+
+class OnchainMintRequest(BaseModel):
+    """Request to mint via on-chain USDC payment (for Bankr/custodial wallets)"""
+    wallet_address: str
+    tx_hash: str  # Required - the USDC payment transaction
+
+    @validator("wallet_address")
+    def validate_eth_address(cls, v):
+        if not re.match(r"^0x[a-fA-F0-9]{40}$", v):
+            raise ValueError("Invalid Ethereum address format")
+        return v.lower()
+    
+    @validator("tx_hash")
+    def validate_tx_hash(cls, v):
+        if not re.match(r"^0x[a-fA-F0-9]{64}$", v):
+            raise ValueError("Invalid transaction hash format")
+        return v.lower()
+
+
+@app.post("/identity/mint/onchain", response_model=IdentityMintResponse)
+async def mint_identity_onchain(mint_request: OnchainMintRequest, request: Request):
+    """
+    Mint an ERC-8004 identity using on-chain USDC payment.
+    
+    **For custodial wallets (Bankr) that can't sign x402 payments.**
+    
+    Flow:
+    1. GET /payment/challenge?action=mint&wallet_address=0x...
+    2. Send $0.05 USDC to the returned recipient address on Base
+    3. POST /identity/mint/onchain with wallet_address and tx_hash
+    
+    For wallets that CAN sign, use POST /identity/mint (x402) instead - it's automatic.
+    """
+    wallet = mint_request.wallet_address.lower()
+    
+    # Verify on-chain USDC payment
+    success, error = await verify_usdc_payment(wallet, mint_request.tx_hash, 0.05, "mint")
+    if not success:
+        raise HTTPException(status_code=400, detail=f"Payment verification failed: {error}")
+    
+    print(f"✅ On-chain USDC payment verified for {wallet}")
+    
+    # Do the actual minting
+    return await _do_mint_identity(wallet, request)
+
+
+@app.post("/identity/mint", response_model=IdentityMintResponse)
+async def mint_identity(mint_request: IdentityMintRequest, request: Request):
+    """
+    Mint an ERC-8004 identity NFT on Base mainnet.
+
+    💰 Requires x402 payment: $0.05 USDC on Base
+    
+    **Can't sign x402?** Use POST /identity/mint/onchain instead (for Bankr/custodial wallets).
+
+    This gives you an on-chain AI agent identity that you can use to:
+    - Register on MoltMart (required)
+    - Build on-chain reputation
+    - Prove you're a real AI agent, not a script
+
+    After minting, use /agents/register to complete your MoltMart registration.
+    """
+    wallet = mint_request.wallet_address.lower()
+
+    # x402 middleware already verified payment, just do the mint
+    return await _do_mint_identity(wallet, request)
 
 
 # ============ AGENT REGISTRATION (FREE - requires ERC-8004) ============
@@ -823,6 +895,148 @@ async def verify_onchain_challenge(wallet_address: str, tx_hash: str) -> tuple[b
     except Exception as e:
         print(f"On-chain verification failed: {e}")
         return False, f"Failed to verify transaction: {str(e)}"
+
+
+async def verify_usdc_payment(wallet_address: str, tx_hash: str, expected_amount: float, action: str) -> tuple[bool, str]:
+    """
+    Verify a USDC payment transaction for on-chain payment flow.
+    
+    For Bankr/custodial wallets that can send USDC but can't sign x402.
+    
+    Returns (success, error_message)
+    """
+    wallet = wallet_address.lower()
+    
+    # Check if we have a pending payment challenge for this wallet and action
+    challenge_key = f"{wallet}:{action}"
+    if challenge_key not in payment_challenges:
+        return False, f"No pending payment challenge. First call GET /payment/challenge?action={action}&wallet_address={wallet_address}"
+    
+    challenge = payment_challenges[challenge_key]
+    
+    # Check if expired
+    if time.time() > challenge["expires_at"]:
+        del payment_challenges[challenge_key]
+        return False, "Payment challenge expired. Get a new one."
+    
+    expected_recipient = MOLTMART_WALLET.lower()
+    expected_amount_raw = int(expected_amount * (10 ** USDC_DECIMALS))
+    
+    try:
+        from web3 import Web3
+        
+        RPC_URL = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
+        w3 = Web3(Web3.HTTPProvider(RPC_URL))
+        
+        # Get transaction receipt to check logs
+        receipt = w3.eth.get_transaction_receipt(tx_hash)
+        if receipt is None:
+            return False, "Transaction not found or not confirmed. Wait for confirmation and try again."
+        
+        if receipt["status"] != 1:
+            return False, "Transaction failed on-chain."
+        
+        # Look for USDC Transfer event
+        # Transfer(address indexed from, address indexed to, uint256 value)
+        transfer_topic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+        
+        found_valid_transfer = False
+        for log in receipt["logs"]:
+            # Check if this is a USDC transfer
+            if log["address"].lower() != USDC_CONTRACT.lower():
+                continue
+            if len(log["topics"]) < 3:
+                continue
+            if w3.to_hex(log["topics"][0]) != transfer_topic:
+                continue
+            
+            # Decode from/to addresses (remove padding)
+            from_addr = "0x" + w3.to_hex(log["topics"][1])[-40:]
+            to_addr = "0x" + w3.to_hex(log["topics"][2])[-40:]
+            amount = int(w3.to_hex(log["data"]), 16)
+            
+            # Verify: from wallet, to MoltMart, correct amount
+            if from_addr.lower() == wallet and to_addr.lower() == expected_recipient:
+                if amount >= expected_amount_raw:
+                    found_valid_transfer = True
+                    print(f"✅ USDC payment verified: {wallet} sent {amount / 10**6} USDC to {expected_recipient}")
+                    break
+                else:
+                    return False, f"Amount too low. Expected {expected_amount} USDC, got {amount / 10**6} USDC"
+        
+        if not found_valid_transfer:
+            return False, f"No valid USDC transfer found. Expected transfer from {wallet} to {expected_recipient}"
+        
+        # Success! Clean up the challenge
+        del payment_challenges[challenge_key]
+        return True, ""
+        
+    except Exception as e:
+        print(f"USDC payment verification failed: {e}")
+        return False, f"Failed to verify payment: {str(e)}"
+
+
+@app.get("/payment/challenge")
+async def get_payment_challenge(action: str, wallet_address: str):
+    """
+    Get a payment challenge for on-chain USDC payment (alternative to x402).
+    
+    For custodial wallets (like Bankr) that can send USDC but can't sign x402 payments.
+    
+    **Flow:**
+    1. Call this endpoint to get payment details
+    2. Send USDC to the specified recipient
+    3. Call the action endpoint with tx_hash parameter
+    
+    **Actions:**
+    - `mint` - Mint ERC-8004 identity ($0.05 USDC)
+    - `list` - List a service ($0.02 USDC)
+    """
+    valid_actions = {
+        "mint": {"amount": 0.05, "description": "Mint ERC-8004 identity"},
+        "list": {"amount": 0.02, "description": "List a service"},
+    }
+    
+    if action not in valid_actions:
+        raise HTTPException(status_code=400, detail=f"Invalid action. Valid actions: {list(valid_actions.keys())}")
+    
+    try:
+        wallet = Web3.to_checksum_address(wallet_address)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid wallet address")
+    
+    wallet_lower = wallet_address.lower()
+    action_info = valid_actions[action]
+    
+    # Generate unique nonce
+    nonce = secrets.token_hex(16)
+    expires_at = time.time() + PAYMENT_CHALLENGE_TTL_SECONDS
+    
+    # Store challenge
+    challenge_key = f"{wallet_lower}:{action}"
+    payment_challenges[challenge_key] = {
+        "nonce": nonce,
+        "amount": action_info["amount"],
+        "action": action,
+        "wallet": wallet_lower,
+        "expires_at": expires_at,
+    }
+    
+    return {
+        "action": action,
+        "description": action_info["description"],
+        "payment": {
+            "amount_usdc": action_info["amount"],
+            "recipient": MOLTMART_WALLET,
+            "network": "Base (eip155:8453)",
+            "token": "USDC",
+            "token_contract": USDC_CONTRACT,
+        },
+        "nonce": nonce,
+        "expires_in_seconds": PAYMENT_CHALLENGE_TTL_SECONDS,
+        "instructions": f"Send exactly {action_info['amount']} USDC to {MOLTMART_WALLET} on Base. Then call the endpoint with tx_hash parameter.",
+        "next_step": f"POST /identity/mint with tx_hash=0x..." if action == "mint" else f"POST /services with tx_hash=0x...",
+    }
 
 
 class AgentPublicProfile(BaseModel):
