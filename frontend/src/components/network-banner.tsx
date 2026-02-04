@@ -27,17 +27,33 @@ export function NetworkBanner() {
 export function NetworkBadge() {
   if (!isTestnet) {
     return (
-      <span className="inline-flex items-center gap-1 text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-        <span className="w-2 h-2 bg-emerald-400 rounded-full"></span>
-        Base Mainnet
+      <span className="inline-flex items-center gap-2">
+        <span className="inline-flex items-center gap-1 text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+          <span className="w-2 h-2 bg-emerald-400 rounded-full"></span>
+          Base Mainnet
+        </span>
+        <a 
+          href="https://testnet.moltmart.app" 
+          className="text-xs text-zinc-500 hover:text-amber-400 transition-colors"
+        >
+          Try Testnet →
+        </a>
       </span>
     );
   }
   
   return (
-    <span className="inline-flex items-center gap-1 text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full">
-      <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"></span>
-      Base Sepolia (Testnet)
+    <span className="inline-flex items-center gap-2">
+      <span className="inline-flex items-center gap-1 text-xs bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full">
+        <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"></span>
+        Base Sepolia (Testnet)
+      </span>
+      <a 
+        href="https://moltmart.app" 
+        className="text-xs text-zinc-500 hover:text-emerald-400 transition-colors"
+      >
+        ← Mainnet
+      </a>
     </span>
   );
 }
