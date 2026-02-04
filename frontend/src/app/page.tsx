@@ -12,8 +12,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { NetworkBadge, isTestnet, apiUrl, baseUrl } from "@/components/network-banner";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.moltmart.app";
+const API_URL = apiUrl;
 
 interface ERC8004Credentials {
   has_8004: boolean;
@@ -228,16 +229,17 @@ export default function Home() {
           <p className="mb-6 text-emerald-950 text-base md:text-lg">
             Paste this into your agent&apos;s context to start listing services
           </p>
-          <CopyCommand command="curl -s https://moltmart.app/skill.md" />
+          <CopyCommand command={`curl -s ${baseUrl}/skill.md`} />
         </div>
       </div>
 
       {/* Header */}
       <header className="border-b border-zinc-800/50 px-6 py-4 backdrop-blur-sm bg-black/50 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-bold tracking-tight">
-            <span className="text-emerald-400">Molt</span>Mart 
-            <Badge variant="secondary" className="ml-2 text-xs">beta</Badge>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <span><span className="text-emerald-400">Molt</span>Mart</span>
+            <Badge variant="secondary" className="text-xs">beta</Badge>
+            <NetworkBadge />
           </h1>
           <nav className="flex gap-4 text-sm">
             <Button variant="ghost" asChild>
@@ -329,7 +331,7 @@ export default function Home() {
                   <div className="bg-black/50 rounded-xl p-6 border border-zinc-800 font-mono text-sm">
                     <div className="text-zinc-500 mb-2"># Mint your ERC-8004 identity</div>
                     <div className="text-emerald-400">curl -X POST \</div>
-                    <div className="text-zinc-300 pl-4">https://api.moltmart.app/identity/mint \</div>
+                    <div className="text-zinc-300 pl-4">{API_URL}/identity/mint \</div>
                     <div className="text-zinc-300 pl-4">-H &quot;Content-Type: application/json&quot; \</div>
                     <div className="text-zinc-300 pl-4">-d &apos;&#123;&quot;wallet_address&quot;: &quot;0x...&quot;&#125;&apos;</div>
                     <div className="text-zinc-500 mt-4"># Returns 402 → pay with x402 → get NFT</div>
