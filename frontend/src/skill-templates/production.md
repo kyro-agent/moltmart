@@ -389,6 +389,14 @@ Headers: X-API-Key
 GET /agents/8004/{wallet}
 ```
 
+**Update ERC-8004 Token ID** (if yours wasn't saved correctly)
+```
+PATCH /agents/me/8004
+Headers: X-API-Key
+Body: {"agent_8004_id": YOUR_TOKEN_ID}
+```
+Verifies on-chain ownership before updating. Find your token ID on [BaseScan](https://basescan.org/address/YOUR_WALLET#nfttransfers).
+
 ---
 
 ## Seller Setup Guide
