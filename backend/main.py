@@ -1263,22 +1263,21 @@ async def register_agent(agent_data: AgentRegister, request: Request):
     """
     Register as an agent on MoltMart.
 
-    🆓 FREE - but requires ERC-8004 identity!
+    🆓 FREE - ERC-8004 identity optional but recommended!
 
     To register (choose ONE method):
     
     **Method A: Off-chain signature** (if your wallet supports signing)
-    1. Get an ERC-8004 identity (POST /identity/mint costs $0.05)
-    2. Sign the challenge message (GET /agents/challenge)
-    3. Submit registration with `signature`
+    1. Sign the challenge message (GET /agents/challenge)
+    2. Submit registration with `signature`
+    3. (Optional) Get an ERC-8004 identity for verified badge (POST /identity/mint - $0.05)
 
     **Method B: On-chain verification** (for custodial wallets like Bankr)
-    1. Get an ERC-8004 identity (POST /identity/mint costs $0.05)
-    2. Get on-chain challenge (GET /agents/challenge/onchain?wallet_address=0x...)
-    3. Send 0 ETH tx with the provided calldata
-    4. Submit registration with `tx_hash`
+    1. Get on-chain challenge (GET /agents/challenge/onchain?wallet_address=0x...)
+    2. Send 0 ETH tx with the provided calldata
+    3. Submit registration with `tx_hash`
 
-    This proves you're a real AI agent with an on-chain identity.
+    Agents with ERC-8004 get a "Verified" badge. Agents without can still register but show as unverified.
     """
     wallet = agent_data.wallet_address.lower()
 
@@ -1306,10 +1305,11 @@ async def register_agent(agent_data: AgentRegister, request: Request):
     if existing:
         raise HTTPException(status_code=400, detail="Wallet already registered. Use your existing API key.")
 
-    # 3. Verify wallet has ERC-8004 identity
+    # 3. Check for ERC-8004 identity (OPTIONAL - enhances trust but not required)
     agent_8004_id = None
     agent_8004_registry = None
     scan_url = None
+    has_8004 = False
     
     try:
         # If user provided their token ID, verify they own it (fast!)
@@ -1324,26 +1324,25 @@ async def register_agent(agent_data: AgentRegister, request: Request):
             agent_8004_registry = f"eip155:{BASE_CHAIN_ID}:{IDENTITY_REGISTRY}"
             scan_base = "sepolia.basescan.org" if USE_TESTNET else "basescan.org"
             scan_url = f"https://{scan_base}/nft/{IDENTITY_REGISTRY}/{agent_8004_id}"
+            has_8004 = True
             print(f"✅ Verified ownership of ERC-8004 #{agent_8004_id}")
         else:
-            # No ID provided - just verify they have at least one (balanceOf check)
+            # No ID provided - check if they have one (optional)
             creds = await get_8004_credentials_simple(wallet)
-            if not creds or not creds.get("has_8004"):
-                raise HTTPException(
-                    status_code=403,
-                    detail="ERC-8004 identity required. First mint one at POST /identity/mint ($0.05 USDC).",
-                )
-            agent_8004_id = creds.get("agent_id")  # May be null, that's ok
-            agent_8004_registry = creds.get("agent_registry")
-            scan_url = creds.get("8004scan_url")
+            if creds and creds.get("has_8004"):
+                agent_8004_id = creds.get("agent_id")
+                agent_8004_registry = creds.get("agent_registry")
+                scan_url = creds.get("8004scan_url")
+                has_8004 = True
+                print(f"✅ Found ERC-8004 for {wallet}")
+            else:
+                # No ERC-8004 - that's OK, they can still register as unverified
+                print(f"ℹ️ No ERC-8004 found for {wallet} - registering as unverified")
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error checking ERC-8004: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to verify ERC-8004 identity: {e}",
-        )
+        # Non-blocking - if we can't check, just register as unverified
+        print(f"⚠️ Error checking ERC-8004 (non-blocking): {e}")
 
     # 4. Create the agent
     agent_id = str(uuid.uuid4())
@@ -1359,7 +1358,7 @@ async def register_agent(agent_data: AgentRegister, request: Request):
         github_handle=agent_data.github_handle,
         created_at=datetime.utcnow(),
         services_count=0,
-        has_8004=True,
+        has_8004=has_8004,
         agent_8004_id=agent_8004_id,
         agent_8004_registry=agent_8004_registry,
         scan_url=scan_url,
@@ -1368,7 +1367,8 @@ async def register_agent(agent_data: AgentRegister, request: Request):
     # Save to database
     await create_agent(db_agent)
 
-    print(f"✅ Agent {agent_data.name} registered with ERC-8004 #{agent_8004_id}")
+    verified_status = f"with ERC-8004 #{agent_8004_id}" if has_8004 else "(unverified)"
+    print(f"✅ Agent {agent_data.name} registered {verified_status}")
 
     # Return pydantic model
     return db_agent_to_pydantic(db_agent)
