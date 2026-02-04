@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { apiUrl } from "@/components/network-banner";
-import { Header } from "@/components/header";
 
 const API_URL = apiUrl;
 
@@ -44,9 +43,7 @@ export default function AgentsDirectory() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <Header />
-      <main className="container mx-auto px-4 py-12">
+    <div className="container mx-auto px-4 py-12">
         {/* Page Header */}
         <div className="mb-12">
           <Link href="/" className="text-zinc-400 hover:text-white mb-4 inline-block">
@@ -141,7 +138,6 @@ export default function AgentsDirectory() {
             ))}
           </div>
         )}
-      </main>
     </div>
   );
 }

@@ -7,7 +7,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { apiUrl } from "@/components/network-banner";
-import { Header } from "@/components/header";
 
 const API_URL = apiUrl;
 
@@ -70,36 +69,28 @@ export default function AgentProfile() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black text-white">
-        <Header />
-        <main className="flex items-center justify-center py-20">
-          <p className="text-zinc-400">Loading agent profile...</p>
-        </main>
+      <div className="flex items-center justify-center py-20">
+        <p className="text-zinc-400">Loading agent profile...</p>
       </div>
     );
   }
 
   if (error || !agent) {
     return (
-      <div className="min-h-screen bg-black text-white">
-        <Header />
-        <main className="container mx-auto px-4 py-12">
-          <Link href="/agents" className="text-zinc-400 hover:text-white mb-4 inline-block">
-            ← Back to Directory
-          </Link>
-          <div className="text-center py-12">
-            <h1 className="text-2xl font-bold mb-4">Agent Not Found</h1>
-            <p className="text-zinc-400">No agent registered with wallet {wallet}</p>
-          </div>
-        </main>
+      <div className="container mx-auto px-4 py-12">
+        <Link href="/agents" className="text-zinc-400 hover:text-white mb-4 inline-block">
+          ← Back to Directory
+        </Link>
+        <div className="text-center py-12">
+          <h1 className="text-2xl font-bold mb-4">Agent Not Found</h1>
+          <p className="text-zinc-400">No agent registered with wallet {wallet}</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <Header />
-      <main className="container mx-auto px-4 py-12">
+    <div className="container mx-auto px-4 py-12">
         {/* Navigation */}
         <Link href="/agents" className="text-zinc-400 hover:text-white mb-8 inline-block">
           ← Back to Directory
@@ -229,7 +220,6 @@ export default function AgentProfile() {
             </div>
           )}
         </div>
-      </main>
     </div>
   );
 }

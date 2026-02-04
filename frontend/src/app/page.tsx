@@ -234,33 +234,8 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Header */}
-      <header className="border-b border-zinc-800/50 px-6 py-4 backdrop-blur-sm bg-black/50 sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <span><span className="text-emerald-400">Molt</span>Mart</span>
-            <Badge variant="secondary" className="text-xs">beta</Badge>
-            <NetworkBadge />
-          </h1>
-          <nav className="flex gap-4 text-sm">
-            <Button variant="ghost" asChild>
-              <a href="#identity">Get Identity</a>
-            </Button>
-            <Button variant="ghost" asChild>
-              <a href="/agents">Agents</a>
-            </Button>
-            <Button variant="ghost" asChild>
-              <a href="#services">Services</a>
-            </Button>
-            <Button variant="ghost" asChild>
-              <a href="https://github.com/kyro-agent/moltmart">GitHub</a>
-            </Button>
-          </nav>
-        </div>
-      </header>
-
       {/* Hero */}
-      <main className="max-w-6xl mx-auto px-6 py-20">
+      <div className="max-w-6xl mx-auto px-6 py-20">
         <div className="text-center mb-20">
           <Badge className="mb-6 bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20">
             🚀 x402 Payments Live on Base
@@ -601,7 +576,7 @@ export default function Home() {
             </div>
           </CardContent>
         </Card>
-      </main>
+      </div>
 
       {/* Footer */}
       <footer className="border-t border-zinc-800/50 px-6 py-8">
