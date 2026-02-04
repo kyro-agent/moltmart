@@ -59,12 +59,17 @@ async function mintIdentity() {
   
   const data = await response.json();
   
+  console.log(`   Response status: ${response.status}`);
+  console.log(`   Response data: ${JSON.stringify(data, null, 2)}`);
+  
   if (response.ok && data.success) {
     console.log(`   ✅ Minted! Agent ID: ${data.agent_id}`);
     console.log(`   TX: ${data.scan_url}`);
     return true;
   } else {
     console.log(`   ❌ Minting failed: ${data.error || response.status}`);
+    if (data.reason) console.log(`   Reason: ${data.reason}`);
+    if (data.detail) console.log(`   Detail: ${data.detail}`);
     return false;
   }
 }

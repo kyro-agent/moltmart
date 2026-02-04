@@ -68,6 +68,29 @@ app = FastAPI(
 
 
 @app.middleware("http")
+async def log_x402_requests(request: Request, call_next):
+    """Log x402 payment requests for debugging"""
+    payment_header = request.headers.get("payment-signature") or request.headers.get("PAYMENT-SIGNATURE")
+    if payment_header:
+        print(f"🔐 x402 payment detected for {request.method} {request.url.path}")
+        try:
+            import base64
+            decoded = base64.b64decode(payment_header).decode()
+            print(f"📦 Payment payload (first 200 chars): {decoded[:200]}...")
+        except Exception as e:
+            print(f"⚠️ Could not decode payment header: {e}")
+    
+    response = await call_next(request)
+    
+    if payment_header and response.status_code == 402:
+        print(f"❌ x402 payment REJECTED - status 402")
+    elif payment_header and response.status_code == 200:
+        print(f"✅ x402 payment ACCEPTED")
+    
+    return response
+
+
+@app.middleware("http")
 async def fix_scheme_for_proxy(request: Request, call_next):
     """
     Fix scheme for requests behind Railway/Vercel proxy.
