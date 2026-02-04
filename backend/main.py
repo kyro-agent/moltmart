@@ -195,7 +195,9 @@ CHAIN_ID = 84532 if USE_TESTNET else 8453  # Base Sepolia vs Base Mainnet
 NETWORK = f"eip155:{CHAIN_ID}"
 
 # Payment recipient (Kyro's wallet)
-MOLTMART_WALLET = os.getenv("MOLTMART_WALLET", "0xf25896f67f849091f6d5bfed7736859aa42427b4")
+# Use operator/facilitator wallet for revenue (same wallet pays gas costs)
+# This keeps accounting simple: revenue and costs in one place
+MOLTMART_WALLET = os.getenv("MOLTMART_WALLET", "0x8b5625F01b286540AC9D8043E2d765D6320FDB14")
 
 # Our custom facilitator
 FACILITATOR_URL = os.getenv("FACILITATOR_URL", "https://facilitator.moltmart.app")
