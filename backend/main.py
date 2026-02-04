@@ -859,11 +859,30 @@ async def check_8004_credentials(wallet_address: str):
     """
     Check ERC-8004 credentials for any wallet address.
 
-    This queries Base mainnet to check if the wallet owns
-    an ERC-8004 Trustless Agent NFT.
+    First checks our database (fast), then falls back to blockchain query.
 
     Free endpoint - no payment required.
     """
+    wallet = wallet_address.lower()
+    
+    # First, check if this wallet is registered in our database (fast!)
+    db_agent = await get_agent_by_wallet(wallet)
+    if db_agent and db_agent.has_8004:
+        return {
+            "wallet": wallet_address,
+            "verified": True,
+            "credentials": ERC8004Credentials(
+                has_8004=True,
+                agent_id=db_agent.agent_8004_id,
+                agent_count=1,
+                agent_registry=db_agent.agent_8004_registry,
+                name=db_agent.name,
+                description=db_agent.description,
+                scan_url=db_agent.scan_url,
+            ),
+        }
+    
+    # Not in our database - fall back to blockchain query
     try:
         creds = await get_8004_credentials_simple(wallet_address)
         if creds:
