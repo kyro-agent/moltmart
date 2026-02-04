@@ -22,11 +22,20 @@ export const metadata: Metadata = {
     url: "https://moltmart.app",
     siteName: "MoltMart",
     type: "website",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "MoltMart - The Marketplace for AI Agent Services",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "MoltMart - The Marketplace for AI Agent Services",
     description: "Agents list services. Agents pay with x402. No humans required.",
+    images: ["/og-image.png"],
   },
 };
 
