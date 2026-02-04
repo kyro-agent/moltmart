@@ -34,13 +34,20 @@ elif DATABASE_URL.startswith("sqlite"):
 
 print(f"🔌 Final DATABASE_URL (sanitized): {_sanitize_url(DATABASE_URL)}")
 
-# Create async engine with connection timeout
+# Create async engine with proper pool settings
+# Railway free tier has limited connections, so keep pool small
 engine = create_async_engine(
     DATABASE_URL, 
     echo=False,
-    pool_pre_ping=True,  # Test connections before using
-    pool_timeout=30,  # Connection pool timeout
-    connect_args={"timeout": 30} if "sqlite" not in DATABASE_URL else {}
+    pool_pre_ping=True,  # Test connections before using - detects stale connections
+    pool_size=3,  # Keep small for Railway free tier
+    max_overflow=2,  # Allow 2 extra connections under load
+    pool_timeout=30,  # Wait up to 30s for a connection from pool
+    pool_recycle=300,  # Recycle connections after 5 min (prevents stale connections)
+    connect_args={
+        "command_timeout": 30,  # asyncpg: timeout for individual commands
+        "server_settings": {"application_name": "moltmart-backend"}
+    } if "postgresql" in DATABASE_URL else {}
 )
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -160,23 +167,41 @@ class MintCostDB(Base):
 # ============ DATABASE OPERATIONS ============
 
 
-async def init_db():
-    """Initialize database tables"""
+async def init_db(max_retries: int = 3, retry_delay: float = 5.0):
+    """
+    Initialize database tables with retry logic.
+    
+    Railway PostgreSQL can be slow to accept connections after restart,
+    so we retry a few times before giving up.
+    """
     import asyncio
-    print("🔌 Attempting database connection...")
-    try:
-        async with asyncio.timeout(45):  # 45 second timeout
-            async with engine.begin() as conn:
-                print("✅ Database connection established!")
-                await conn.run_sync(Base.metadata.create_all)
-                print("✅ Database tables created/verified!")
-    except asyncio.TimeoutError:
-        print("❌ DATABASE CONNECTION TIMEOUT after 45 seconds")
-        print("   Check: Is PostgreSQL running? Is DATABASE_URL correct?")
-        raise
-    except Exception as e:
-        print(f"❌ DATABASE CONNECTION ERROR: {type(e).__name__}: {e}")
-        raise
+    
+    for attempt in range(1, max_retries + 1):
+        print(f"🔌 Attempting database connection (attempt {attempt}/{max_retries})...")
+        try:
+            async with asyncio.timeout(30):  # 30 second timeout per attempt
+                async with engine.begin() as conn:
+                    print("✅ Database connection established!")
+                    await conn.run_sync(Base.metadata.create_all)
+                    print("✅ Database tables created/verified!")
+                    return  # Success!
+        except asyncio.TimeoutError:
+            print(f"⚠️ Connection attempt {attempt} timed out after 30 seconds")
+            if attempt < max_retries:
+                print(f"   Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+            else:
+                print("❌ DATABASE CONNECTION TIMEOUT - all retries exhausted")
+                print("   Check: Is PostgreSQL running? Is DATABASE_URL correct?")
+                raise
+        except Exception as e:
+            print(f"⚠️ Connection attempt {attempt} failed: {type(e).__name__}: {e}")
+            if attempt < max_retries:
+                print(f"   Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+            else:
+                print(f"❌ DATABASE CONNECTION ERROR - all retries exhausted")
+                raise
 
 
 async def get_agent_by_api_key(api_key: str) -> AgentDB | None:
