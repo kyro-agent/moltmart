@@ -263,6 +263,11 @@ app.get("/supported", async (req, res) => {
   }
 });
 
+// Simple ping - no dependencies, just confirms Express is routing
+app.get("/ping", (_req, res) => {
+  res.send("pong");
+});
+
 // Health check
 app.get("/health", async (_req, res) => {
   res.json({
@@ -282,8 +287,8 @@ app.get("/", async (_req, res) => {
   });
 });
 
-// Start server
-app.listen(parseInt(PORT), () => {
+// Start server - bind to 0.0.0.0 explicitly for Railway
+app.listen(parseInt(PORT), "0.0.0.0", () => {
   console.log(`\n🚀 MoltMart x402 Facilitator running on http://localhost:${PORT}`);
   console.log(`   Network: ${BASE_NETWORK} (Base mainnet)`);
   console.log(`   Wallet: ${account.address}`);
