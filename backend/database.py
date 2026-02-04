@@ -126,9 +126,11 @@ async def init_db(max_retries: int = 3, retry_delay: float = 5.0) -> None:
             async with asyncio.timeout(30):
                 async with engine.begin() as conn:
                     await conn.run_sync(Base.metadata.create_all)
+                    logger.info("Database tables created")
+            # Run migrations for new columns (separate connection)
+            async with engine.begin() as conn:
+                await run_migrations(conn)
             logger.info("Database initialized successfully")
-            # Run migrations for new columns
-            await run_migrations(conn)
             return
         except asyncio.TimeoutError:
             logger.warning(f"Connection attempt {attempt} timed out")
