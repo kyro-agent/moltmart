@@ -1,7 +1,7 @@
 /**
  * MoltMart x402 Facilitator
  * 
- * Verifies and settles x402 payments on Base mainnet.
+ * Verifies and settles x402 payments on Base (mainnet or testnet).
  * Based on arc-merchant facilitator by @ortegarod
  */
 
@@ -16,9 +16,9 @@ import { toFacilitatorEvmSigner } from "@x402/evm";
 import { registerExactEvmScheme } from "@x402/evm/exact/facilitator";
 import dotenv from "dotenv";
 import express from "express";
-import { createPublicClient, createWalletClient, http, Abi } from "viem";
+import { createPublicClient, createWalletClient, http, Abi, Chain } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { base } from "viem/chains";
+import { base, baseSepolia } from "viem/chains";
 
 dotenv.config();
 
@@ -31,12 +31,32 @@ process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error);
 });
 
-const PORT = process.env.PORT || "4022";
-const RPC_URL = process.env.RPC_URL || "https://mainnet.base.org";
-const BASE_NETWORK = "eip155:8453";
+// Network configuration - set USE_TESTNET=true for Base Sepolia
+const USE_TESTNET = process.env.USE_TESTNET?.toLowerCase() === "true";
 
-// Base mainnet USDC contract
-const BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const PORT = process.env.PORT || "4022";
+
+// Configure based on network
+let RPC_URL: string;
+let BASE_NETWORK: string;
+let BASE_USDC: string;
+let CHAIN: Chain;
+
+if (USE_TESTNET) {
+  // Base Sepolia (Testnet)
+  RPC_URL = process.env.RPC_URL || "https://sepolia.base.org";
+  BASE_NETWORK = "eip155:84532";
+  BASE_USDC = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"; // Circle's testnet USDC
+  CHAIN = baseSepolia;
+  console.log("🧪 Facilitator: Using Base Sepolia TESTNET");
+} else {
+  // Base Mainnet
+  RPC_URL = process.env.RPC_URL || "https://mainnet.base.org";
+  BASE_NETWORK = "eip155:8453";
+  BASE_USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // USDC on Base
+  CHAIN = base;
+  console.log("🔴 Facilitator: Using Base MAINNET");
+}
 
 // Facilitator private key (for settling transactions)
 const FACILITATOR_PRIVATE_KEY = process.env.FACILITATOR_PRIVATE_KEY;
@@ -51,13 +71,13 @@ if (!FACILITATOR_PRIVATE_KEY) {
 const account = privateKeyToAccount(FACILITATOR_PRIVATE_KEY as `0x${string}`);
 
 const publicClient = createPublicClient({
-  chain: base,
+  chain: CHAIN,
   transport: http(RPC_URL),
 });
 
 const walletClient = createWalletClient({
   account,
-  chain: base,
+  chain: CHAIN,
   transport: http(RPC_URL),
 });
 
@@ -161,14 +181,14 @@ const facilitator = new x402Facilitator()
     console.log("❌ Settlement failed:", context);
   });
 
-// Register Base mainnet with our signer
+// Register Base network with our signer
 registerExactEvmScheme(facilitator, {
   signer: evmSigner,
-  networks: BASE_NETWORK,
+  networks: BASE_NETWORK as `eip155:${number}`,
   deployERC4337WithEIP6492: false,
 });
 
-console.log(`📡 Registered network: ${BASE_NETWORK} (Base mainnet)`);
+console.log(`📡 Registered network: ${BASE_NETWORK} (Base ${USE_TESTNET ? "Sepolia" : "Mainnet"})`);
 
 // Express app
 const app = express();
@@ -290,7 +310,7 @@ app.get("/", async (_req, res) => {
 // Start server - bind to 0.0.0.0 explicitly for Railway
 app.listen(parseInt(PORT), "0.0.0.0", () => {
   console.log(`\n🚀 MoltMart x402 Facilitator running on http://localhost:${PORT}`);
-  console.log(`   Network: ${BASE_NETWORK} (Base mainnet)`);
+  console.log(`   Network: ${BASE_NETWORK} (Base ${USE_TESTNET ? "Sepolia" : "Mainnet"})`);
   console.log(`   Wallet: ${account.address}`);
   console.log(`   USDC: ${BASE_USDC}`);
   console.log(`   Endpoints: POST /verify, POST /settle, GET /supported, GET /health\n`);
