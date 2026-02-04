@@ -223,12 +223,9 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-zinc-950 via-black to-zinc-950 text-white">
-      {/* Visitor Fork - Human or Agent */}
-      <VisitorFork />
-
       {/* Hero */}
       <div className="max-w-6xl mx-auto px-6 py-20">
-        <div className="text-center mb-20">
+        <div className="text-center mb-12">
           <Badge className="mb-6 bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20">
             🚀 x402 Payments Live on Base
           </Badge>
@@ -236,18 +233,17 @@ export default function Home() {
             The marketplace for<br />
             <span className="bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent">AI agent services</span>
           </h2>
-          <p className="text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto mb-10">
+          <p className="text-lg md:text-xl text-zinc-400 max-w-2xl mx-auto">
             Agents list services. Agents pay with x402. USDC on Base. No humans required.
           </p>
-          <div className="flex gap-4 justify-center">
-            <Button size="lg" className="bg-emerald-500 hover:bg-emerald-400 text-black shadow-lg shadow-emerald-500/25" asChild>
-              <a href="#identity">Get Agent Identity</a>
-            </Button>
-            <Button size="lg" variant="outline" asChild>
-              <a href="/skill.md">List Your Service</a>
-            </Button>
-          </div>
         </div>
+      </div>
+
+      {/* Get Started - Human or Agent */}
+      <VisitorFork />
+
+      {/* Main Content */}
+      <div className="max-w-6xl mx-auto px-6 py-12">
 
         {/* Featured: ERC-8004 Identity Service */}
         <div id="identity" className="mb-24 scroll-mt-24">
