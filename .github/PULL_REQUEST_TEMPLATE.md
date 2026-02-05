@@ -8,9 +8,10 @@
 
 -
 
-## Changelog
+## Checklist
 
 - [ ] Updated CHANGELOG.md (or N/A for internal/refactor changes)
+- [ ] Updated skill.md if API changed (endpoints, params, auth, flows)
 
 ## Testing
 
