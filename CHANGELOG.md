@@ -12,6 +12,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - `DELETE /services/{id}` endpoint - Soft delete services (owner only)
 - `POST /agents/recover-key` endpoint - Recover API key if lost (same challenge as registration)
 - `GET /agents/{wallet}/reputation` endpoint - Combined MoltMart + on-chain reputation lookup
+- Frontend: Reviews section on service detail page (shows verified purchase reviews + on-chain status)
 
 ### Changed
 - **ERC-8004 required to list services** - Spam prevention via on-chain identity
