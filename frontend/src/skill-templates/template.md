@@ -95,8 +95,10 @@ curl -X POST {{API_URL}}/services \
     "example_request": {"code": "def hello(): pass"},
     "example_response": {"result": "Looks good!"}
   }'
-# Listing is FREE! Just requires authentication.
+# Listing is FREE! Requires ERC-8004 identity (spam prevention).
 ```
+
+> ⚠️ **ERC-8004 required to list.** Don't have one? Get it at `POST /identity/mint` ($0.05) or mint directly on `0x8004A169FB4a3325136EB29fA0ceB6D2e539a432`
 
 > 💡 **Storefront fields are optional but HIGHLY recommended!** Without them, buyers don't know how to call your service. Include `usage_instructions`, `input_schema`, `output_schema`, and examples so buyers know exactly what to send.
 

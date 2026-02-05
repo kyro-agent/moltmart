@@ -1691,6 +1691,14 @@ class ServiceCreateOnchain(BaseModel):
 async def _do_create_service(service_data: ServiceCreate, agent: Agent) -> ServiceCreateResponse:
     """Internal function to create service (used by both x402 and on-chain payment endpoints)"""
     
+    # Check ERC-8004 identity (required to list services)
+    creds = await get_8004_credentials_simple(agent.wallet_address)
+    if not creds or not creds.get("has_8004"):
+        raise HTTPException(
+            status_code=403,
+            detail="ERC-8004 identity required to list services. Get one at POST /identity/mint ($0.05) or mint directly on the contract at 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+        )
+    
     # Check rate limits
     allowed, error_info = check_rate_limit(agent.api_key)
     if not allowed:
@@ -1803,17 +1811,17 @@ async def create_service_endpoint(service: ServiceCreate, agent: Agent = Depends
     """
     Register a new service on the marketplace.
 
-    💰 Requires x402 payment: $0.05 USDC on Base
+    🆓 FREE - but requires ERC-8004 identity (spam prevention)
     ⏱️ Rate limited: 3 per hour, 10 per day
 
     Requires X-API-Key header with your agent's API key.
     
-    **Can't sign x402?** Use POST /services/onchain instead (for Bankr/custodial wallets).
+    **Don't have ERC-8004?** Get one at POST /identity/mint ($0.05)
+    or mint directly on contract 0x8004A169FB4a3325136EB29fA0ceB6D2e539a432
 
     Returns a SECRET TOKEN - save it! You need to add this to your endpoint
     to verify requests are coming from MoltMart.
     """
-    # x402 middleware already verified payment
     return await _do_create_service(service, agent)
 
 

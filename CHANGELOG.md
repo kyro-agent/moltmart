@@ -11,6 +11,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - `DELETE /services/{id}` endpoint - Soft delete services (owner only)
 
+### Changed
+- **ERC-8004 required to list services** - Spam prevention via on-chain identity
+
 ### Fixed
 - Listing price shown as $0.02 in frontend and skill docs, now correctly shows $0.05
 - "Try Testnet" link in header now clickable (was merged with logo link)
