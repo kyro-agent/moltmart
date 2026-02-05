@@ -391,6 +391,20 @@ async def delete_agent_by_wallet(wallet: str) -> bool:
         return False
 
 
+async def update_agent_api_key(wallet: str, new_api_key: str) -> bool:
+    """Update an agent's API key (for key recovery)."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(AgentDB).where(AgentDB.wallet_address == wallet.lower())
+        )
+        agent = result.scalar_one_or_none()
+        if agent:
+            agent.api_key = new_api_key
+            await session.commit()
+            return True
+        return False
+
+
 # ============ SERVICE OPERATIONS ============
 
 
