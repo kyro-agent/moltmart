@@ -329,10 +329,22 @@ def get_reputation(agent_id: int, tag: str = "") -> dict:
         return {"error": "Reputation registry not configured"}
 
     try:
+        # First get the list of clients who have given feedback
+        clients = reputation_registry.functions.getClients(agent_id).call()
+        
+        # If no clients, agent has no feedback yet
+        if not clients:
+            return {
+                "agent_id": agent_id,
+                "feedback_count": 0,
+                "reputation_score": 0,
+                "decimals": 0,
+            }
+        
         # getSummary(agentId, clientAddresses[], tag1, tag2)
         count, value, decimals = reputation_registry.functions.getSummary(
             agent_id,
-            [],  # all clients
+            clients,  # pass the actual client list
             tag,  # tag1 filter
             "",  # tag2 filter
         ).call()
