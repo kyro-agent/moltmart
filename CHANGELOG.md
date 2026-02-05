@@ -18,6 +18,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **ERC-8004 required to list services** - Spam prevention via on-chain identity
 
 ### Fixed
+- **CRITICAL: endpoint_url not persisted** - Column was in model but never migrated to database. All services had null endpoints. (#104)
 - Listing price shown as $0.02 in frontend and skill docs, now correctly shows $0.05
 - "Try Testnet" link in header now clickable (was merged with logo link)
 - Added missing `deleted_at` column migration for soft delete feature

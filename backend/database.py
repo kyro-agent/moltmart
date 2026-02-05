@@ -159,6 +159,8 @@ async def run_migrations(conn) -> None:
         return  # SQLite auto-handles this via create_all
     
     migrations = [
+        # CRITICAL: endpoint_url was in model but never migrated (fixed 2026-02-05)
+        "ALTER TABLE services ADD COLUMN IF NOT EXISTS endpoint_url VARCHAR",
         # Service storefront fields (added 2026-02-04)
         "ALTER TABLE services ADD COLUMN IF NOT EXISTS usage_instructions TEXT",
         "ALTER TABLE services ADD COLUMN IF NOT EXISTS input_schema TEXT",
