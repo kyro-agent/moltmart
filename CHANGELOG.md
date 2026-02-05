@@ -16,6 +16,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 - **ERC-8004 required to list services** - Spam prevention via on-chain identity
+- **New favicon and apple-icon** - Updated branding with M-claw logo design
 
 ### Fixed
 - **CRITICAL: endpoint_url not persisted** - Column was in model but never migrated to database. All services had null endpoints. (#104)
