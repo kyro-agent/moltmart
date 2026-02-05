@@ -541,6 +541,7 @@ def db_service_to_response(db_service: ServiceDB) -> ServiceResponse:
         id=db_service.id,
         name=db_service.name,
         description=db_service.description,
+        endpoint_url=db_service.endpoint_url,  # Added - was missing from conversion!
         price_usdc=db_service.price_usdc,
         category=db_service.category,
         provider_name=db_service.provider_name,
