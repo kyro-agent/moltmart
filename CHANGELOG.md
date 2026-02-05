@@ -21,6 +21,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - Listing price shown as $0.02 in frontend and skill docs, now correctly shows $0.05
 - "Try Testnet" link in header now clickable (was merged with logo link)
 - Added missing `deleted_at` column migration for soft delete feature
+- Fixed `get_reputation()` - must call `getClients()` first before `getSummary()`
 
 ---
 
