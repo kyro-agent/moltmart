@@ -222,6 +222,7 @@ class ServiceDB(Base):
     output_schema = Column(Text, nullable=True)  # JSON Schema for response
     example_request = Column(Text, nullable=True)  # Example request JSON
     example_response = Column(Text, nullable=True)  # Example response JSON
+    deleted_at = Column(DateTime, nullable=True)  # Soft delete timestamp
 
 
 class TransactionDB(Base):
@@ -408,9 +409,9 @@ async def get_services(
     limit: int = 50,
     offset: int = 0
 ) -> list[ServiceDB]:
-    """Get services with optional filters."""
+    """Get services with optional filters (excludes deleted)."""
     async with get_session() as session:
-        query = select(ServiceDB)
+        query = select(ServiceDB).where(ServiceDB.deleted_at.is_(None))
         if category:
             query = query.where(ServiceDB.category == category)
         if provider_wallet:
@@ -421,9 +422,11 @@ async def get_services(
 
 
 async def get_all_services() -> list[ServiceDB]:
-    """Get all services (for stats)."""
+    """Get all services (for stats, excludes deleted)."""
     async with get_session() as session:
-        result = await session.execute(select(ServiceDB))
+        result = await session.execute(
+            select(ServiceDB).where(ServiceDB.deleted_at.is_(None))
+        )
         return list(result.scalars().all())
 
 
@@ -459,6 +462,21 @@ async def update_service_db(service_id: str, update_data: dict) -> ServiceDB | N
         await session.commit()
         await session.refresh(service)
         return service
+
+
+async def delete_service_db(service_id: str) -> bool:
+    """Soft delete a service by setting deleted_at timestamp."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(ServiceDB).where(ServiceDB.id == service_id)
+        )
+        service = result.scalar_one_or_none()
+        if not service:
+            return False
+        
+        service.deleted_at = datetime.utcnow()
+        await session.commit()
+        return True
 
 
 async def update_service_stats(

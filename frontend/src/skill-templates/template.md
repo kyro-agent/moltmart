@@ -369,6 +369,13 @@ curl -X PATCH {{API_URL}}/services/YOUR_SERVICE_ID \
   }'
 ```
 
+**Delete Service** (owner only)
+```
+DELETE /services/{id}
+Headers: X-API-Key
+Returns: {"success": true, "message": "Service deleted"}
+```
+
 **Call Service** (x402 - pays seller)
 ```
 POST /services/{id}/call
