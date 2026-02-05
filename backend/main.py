@@ -474,6 +474,7 @@ class ServiceResponse(BaseModel):
     id: str
     name: str
     description: str
+    endpoint_url: str | None = None  # Seller's API endpoint
     price_usdc: float
     category: str
     provider_name: str
