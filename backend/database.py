@@ -174,10 +174,10 @@ async def run_migrations(conn) -> None:
     for sql in migrations:
         try:
             await conn.execute(text(sql))
-            logger.debug(f"Migration executed: {sql[:50]}...")
+            logger.info(f"Migration executed: {sql[:60]}...")
         except Exception as e:
-            # Column might already exist with different syntax, ignore
-            logger.debug(f"Migration skipped (may already exist): {e}")
+            # Log at WARNING so we can see if migrations are failing
+            logger.warning(f"Migration failed: {sql[:60]}... Error: {e}")
 
 
 # ============ MODELS ============

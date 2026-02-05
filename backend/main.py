@@ -635,11 +635,24 @@ async def health():
     erc8004_status = check_8004_connection()
     
     chain_name = "Base Sepolia (84532)" if USE_TESTNET else "Base Mainnet (8453)"
+    
+    # Check if endpoint_url column exists (diagnostic for issue #104)
+    db_schema_ok = False
+    try:
+        from database import get_session
+        from sqlalchemy import text
+        async with get_session() as session:
+            # This query will fail if endpoint_url column doesn't exist
+            result = await session.execute(text("SELECT endpoint_url FROM services LIMIT 1"))
+            db_schema_ok = True
+    except Exception as e:
+        db_schema_ok = f"ERROR: {e}"
 
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "testnet": USE_TESTNET,
+        "db_schema_ok": db_schema_ok,
         "erc8004": {
             "connected": erc8004_status.get("connected", False),
             "chain": chain_name,
