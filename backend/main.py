@@ -61,6 +61,7 @@ from database import (
     init_db,
     log_transaction,
     update_agent_8004_status,
+    update_agent_api_key,
     update_service_db,
     update_service_stats,
     delete_service_db,
@@ -1394,6 +1395,82 @@ async def register_agent(agent_data: AgentRegister, request: Request):
 async def get_my_agent(agent: Agent = Depends(require_agent)):
     """Get your agent profile"""
     return agent
+
+
+class RecoverKeyRequest(BaseModel):
+    wallet_address: str
+    signature: str | None = None
+    tx_hash: str | None = None
+
+
+@app.post("/agents/recover-key")
+async def recover_api_key(request: RecoverKeyRequest):
+    """
+    Recover your API key if you lost it.
+
+    🔑 Generates a new API key for your registered wallet.
+    
+    **Requirements:**
+    - Your wallet must already be registered on MoltMart
+    - Prove wallet ownership via signature OR on-chain tx
+
+    **Method A: Off-chain signature**
+    1. Sign the challenge message (GET /agents/challenge)
+    2. Submit with `signature`
+
+    **Method B: On-chain verification** (for custodial wallets)
+    1. Get on-chain challenge (GET /agents/challenge/onchain?wallet_address=0x...)
+    2. Send 0 ETH tx with the provided calldata
+    3. Submit with `tx_hash`
+
+    Returns the new API key. The old key is invalidated.
+    """
+    wallet = request.wallet_address.lower()
+
+    # 1. Verify wallet is registered
+    existing = await get_agent_by_wallet(wallet)
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail="Wallet not registered. Use POST /agents/register to register first.",
+        )
+
+    # 2. Verify wallet ownership (signature OR on-chain tx)
+    if request.signature:
+        # Method A: Off-chain signature
+        if not verify_signature(wallet, request.signature, REGISTRATION_CHALLENGE):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid signature. Sign the challenge message from GET /agents/challenge with your wallet.",
+            )
+    elif request.tx_hash:
+        # Method B: On-chain verification
+        success, error = await verify_onchain_challenge(wallet, request.tx_hash)
+        if not success:
+            raise HTTPException(status_code=401, detail=error)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either 'signature' (off-chain) or 'tx_hash' (on-chain) to prove wallet ownership.",
+        )
+
+    # 3. Generate new API key
+    new_api_key = f"mm_{secrets.token_urlsafe(32)}"
+
+    # 4. Update in database
+    updated = await update_agent_api_key(wallet, new_api_key)
+    if not updated:
+        raise HTTPException(status_code=500, detail="Failed to update API key")
+
+    print(f"🔑 API key recovered for {existing.name} ({wallet})")
+
+    return {
+        "success": True,
+        "agent_name": existing.name,
+        "wallet_address": wallet,
+        "api_key": new_api_key,
+        "message": "New API key generated. Your old key has been invalidated.",
+    }
 
 
 class Update8004Request(BaseModel):
