@@ -1737,6 +1737,77 @@ async def get_agent_reputation(agent_id: int, tag: str = ""):
         }
 
 
+@app.get("/agents/{wallet}/reputation")
+async def get_agent_reputation_by_wallet(wallet: str, tag: str = ""):
+    """
+    Get on-chain reputation for an agent by wallet address.
+    
+    Convenience endpoint that looks up the agent's ERC-8004 token ID
+    and returns their on-chain reputation from the ReputationRegistry.
+    
+    - **wallet**: The agent's wallet address
+    - **tag**: Optional tag to filter reputation by category (e.g., "service")
+    
+    Returns both on-chain reputation AND MoltMart review stats.
+    """
+    wallet_lower = wallet.lower()
+    
+    # Get agent from our database
+    db_agent = await get_agent_by_wallet(wallet_lower)
+    if not db_agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    result = {
+        "wallet": wallet_lower,
+        "agent_name": db_agent.name,
+        "has_8004": db_agent.has_8004,
+        "agent_8004_id": db_agent.agent_8004_id,
+        "moltmart_reviews": {
+            "count": 0,
+            "average_rating": None,
+        },
+        "onchain_reputation": None,
+    }
+    
+    # Get MoltMart review stats (from services this agent provides)
+    try:
+        services = await get_services(provider_wallet=wallet_lower)
+        total_reviews = 0
+        total_rating = 0
+        for svc in services:
+            summary = await get_service_rating_summary(svc.id)
+            if summary and summary.get("review_count", 0) > 0:
+                total_reviews += summary["review_count"]
+                total_rating += summary["average_rating"] * summary["review_count"]
+        
+        if total_reviews > 0:
+            result["moltmart_reviews"] = {
+                "count": total_reviews,
+                "average_rating": round(total_rating / total_reviews, 2),
+            }
+    except Exception as e:
+        print(f"Failed to get MoltMart reviews for {wallet}: {e}")
+    
+    # Get on-chain reputation if they have ERC-8004
+    if db_agent.has_8004 and db_agent.agent_8004_id:
+        try:
+            rep = get_reputation(db_agent.agent_8004_id, tag)
+            if "error" not in rep:
+                result["onchain_reputation"] = {
+                    "agent_id": db_agent.agent_8004_id,
+                    "tag": tag or "all",
+                    "feedback_count": rep.get("feedback_count", 0),
+                    "reputation_score": rep.get("reputation_score", 0),
+                    "chain": "Base",
+                    "contract": "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63",
+                    "explorer": f"https://basescan.org/token/0x8004BAa17C55a88189AE136b182e5fdA19dE9b63?a={db_agent.agent_8004_id}",
+                }
+        except Exception as e:
+            print(f"Failed to get on-chain reputation for {wallet}: {e}")
+    
+    return result
+
+
 # ============ SEED DATA ============
 
 # ============ SERVICE REGISTRY (x402 PROTECTED + RATE LIMITED) ============
