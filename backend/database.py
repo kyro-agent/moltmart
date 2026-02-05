@@ -165,6 +165,8 @@ async def run_migrations(conn) -> None:
         "ALTER TABLE services ADD COLUMN IF NOT EXISTS output_schema TEXT",
         "ALTER TABLE services ADD COLUMN IF NOT EXISTS example_request TEXT",
         "ALTER TABLE services ADD COLUMN IF NOT EXISTS example_response TEXT",
+        # Soft delete (added 2026-02-05)
+        "ALTER TABLE services ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
     ]
     
     for sql in migrations:
