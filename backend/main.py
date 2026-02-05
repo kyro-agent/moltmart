@@ -63,6 +63,7 @@ from database import (
     update_agent_8004_status,
     update_service_db,
     update_service_stats,
+    delete_service_db,
 )
 from erc8004 import check_connection as check_8004_connection, IDENTITY_REGISTRY, BASE_CHAIN_ID
 
@@ -1927,6 +1928,38 @@ async def update_service(
     
     print(f"✅ Service {service_id} updated by {agent.name}")
     return db_service_to_response(updated)
+
+
+@app.delete("/services/{service_id}")
+async def delete_service(
+    service_id: str,
+    agent: Agent = Depends(require_agent)
+):
+    """
+    Delete your service listing.
+    
+    Only the service owner can delete. This is a soft delete - 
+    the service is marked as deleted but retained in the database
+    for audit purposes.
+    
+    Requires X-API-Key header.
+    """
+    # Get the service
+    db_service = await get_service(service_id)
+    if not db_service:
+        raise HTTPException(status_code=404, detail="Service not found")
+    
+    # Verify ownership
+    if db_service.provider_wallet.lower() != agent.wallet_address.lower():
+        raise HTTPException(status_code=403, detail="You can only delete your own services")
+    
+    # Soft delete - mark as deleted
+    deleted = await delete_service_db(service_id)
+    if not deleted:
+        raise HTTPException(status_code=500, detail="Failed to delete service")
+    
+    print(f"🗑️ Service {service_id} deleted by {agent.name}")
+    return {"success": True, "message": f"Service '{db_service.name}' deleted"}
 
 
 @app.get("/services/search/{query}")
